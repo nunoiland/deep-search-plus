@@ -32,6 +32,48 @@ TRACKING_PARAMS = {
     "msclkid",
     "ref_src",
 }
+SKIP_LINK_EXTENSIONS = {
+    ".7z",
+    ".avi",
+    ".css",
+    ".gif",
+    ".ico",
+    ".jpeg",
+    ".jpg",
+    ".js",
+    ".m4a",
+    ".m4v",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".ogg",
+    ".png",
+    ".rar",
+    ".svg",
+    ".tar",
+    ".webm",
+    ".webp",
+    ".woff",
+    ".woff2",
+    ".zip",
+}
+LOW_VALUE_LINK_HINTS = {
+    "/about",
+    "/account",
+    "/advertise",
+    "/contact",
+    "/cookie",
+    "/help",
+    "/login",
+    "/privacy",
+    "/register",
+    "/search",
+    "/share",
+    "/signin",
+    "/signup",
+    "/subscribe",
+    "/terms",
+}
 STOPWORDS = {
     "a",
     "an",
@@ -94,6 +136,7 @@ class FetchCheck:
     title: str = ""
     description: str = ""
     metadata: dict[str, Any] = dataclasses.field(default_factory=dict)
+    links: list[dict[str, str]] = dataclasses.field(default_factory=list)
     blocked_signals: list[str] = dataclasses.field(default_factory=list)
     error: str = ""
     elapsed_ms: int = 0
@@ -144,9 +187,12 @@ class SearchRun:
     packs: list[str]
     locale: str
     query_variants: list[str]
+    detective: bool = False
+    dig_pages: int = 0
     results: list[SearchResult] = dataclasses.field(default_factory=list)
     errors: list[SearchError] = dataclasses.field(default_factory=list)
     fetched_urls: list[FetchCheck] = dataclasses.field(default_factory=list)
+    discovered_urls: list[str] = dataclasses.field(default_factory=list)
     elapsed_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -156,9 +202,12 @@ class SearchRun:
             "packs": self.packs,
             "locale": self.locale,
             "query_variants": self.query_variants,
+            "detective": self.detective,
+            "dig_pages": self.dig_pages,
             "results": [result.to_dict() for result in self.results],
             "errors": [error.to_dict() for error in self.errors],
             "fetched_urls": [fetch.to_dict() for fetch in self.fetched_urls],
+            "discovered_urls": self.discovered_urls,
             "top_evidence_urls": [result.url for result in self.results[:10]],
             "elapsed_ms": self.elapsed_ms,
         }
@@ -207,6 +256,41 @@ class MetadataParser(HTMLParser):
             or self.meta.get("twitter:description")
             or ""
         )
+
+
+class LinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[dict[str, str]] = []
+        self._active: dict[str, str] | None = None
+        self._text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        attrs_dict = {key.lower(): value or "" for key, value in attrs}
+        href = attrs_dict.get("href", "").strip()
+        if not href:
+            return
+        self._active = {
+            "url": href,
+            "text": normalize_text(attrs_dict.get("aria-label") or attrs_dict.get("title") or ""),
+        }
+        self._text_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._active is None:
+            return
+        text = normalize_text(" ".join(self._text_parts))
+        if text:
+            self._active["text"] = text
+        self.links.append(self._active)
+        self._active = None
+        self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._active is not None:
+            self._text_parts.append(data)
 
 
 def normalize_text(value: str) -> str:
@@ -279,6 +363,91 @@ def canonicalize_url(url: str) -> str:
         query_pairs.append((key, val))
     query = urllib.parse.urlencode(sorted(query_pairs), doseq=True)
     return urllib.parse.urlunsplit((scheme, host, path, query, ""))
+
+
+def host_for(url: str) -> str:
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def same_site(parent_url: str, child_url: str) -> bool:
+    parent = host_for(parent_url)
+    child = host_for(child_url)
+    if not parent or not child:
+        return False
+    return child == parent or child.endswith("." + parent)
+
+
+def is_http_url(url: str) -> bool:
+    try:
+        return urllib.parse.urlsplit(url).scheme.lower() in {"http", "https"}
+    except Exception:
+        return False
+
+
+def has_skipped_extension(url: str) -> bool:
+    path = urllib.parse.urlsplit(url).path.lower()
+    return any(path.endswith(ext) for ext in SKIP_LINK_EXTENSIONS)
+
+
+def is_low_value_link(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    path = parsed.path.lower().rstrip("/") or "/"
+    if has_skipped_extension(url):
+        return True
+    return any(path == hint or path.endswith(hint) for hint in LOW_VALUE_LINK_HINTS)
+
+
+def extract_links(body: bytes, content_type: str, base_url: str, limit: int = 25) -> list[dict[str, str]]:
+    if limit <= 0:
+        return []
+    text = body[:500_000].decode("utf-8", errors="replace")
+    if "html" not in content_type.lower() and "<a " not in text.lower():
+        return []
+
+    parser = LinkParser()
+    try:
+        parser.feed(text)
+    except Exception:
+        pass
+
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in parser.links:
+        href = raw.get("url", "").strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+            continue
+        absolute = urllib.parse.urljoin(base_url, href)
+        canonical = canonicalize_url(absolute)
+        if not canonical or not is_http_url(canonical) or is_low_value_link(canonical):
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        links.append({"url": canonical, "text": normalize_text(raw.get("text", ""))[:240]})
+        if len(links) >= limit:
+            break
+    return links
+
+
+def discovered_link_score(link: dict[str, str], query: str) -> float:
+    tokens = [token.lower() for token in tokenize(query) if token.lower() not in STOPWORDS]
+    if not tokens:
+        return 0.0
+    haystack_text = link.get("text", "").lower()
+    haystack_url = link.get("url", "").lower()
+    score = 0.0
+    for token in tokens:
+        if token in haystack_text:
+            score += 2.5
+        if token in haystack_url:
+            score += 1.0
+    path = urllib.parse.urlsplit(link.get("url", "")).path.lower()
+    if re.search(r"/(article|news|post|story|report|research|docs?|issues?|pull|release|blog)/", path):
+        score += 1.0
+    return score
 
 
 def build_url(base: str, params: dict[str, Any]) -> str:
@@ -414,11 +583,12 @@ def detect_blocked_signals(text: str, status: int | None) -> list[str]:
     return unique(signals)
 
 
-def verify_url(url: str, timeout: float = 12.0) -> FetchCheck:
+def verify_url(url: str, timeout: float = 12.0, link_limit: int = 0) -> FetchCheck:
     body, status, content_type, final_url, elapsed_ms, error = fetch_bytes(url, timeout)
     text = body[:100_000].decode("utf-8", errors="replace")
     signals = detect_blocked_signals(text, status)
     metadata = extract_metadata(body, content_type) if body else {}
+    links = extract_links(body, content_type, final_url or url, link_limit) if body else []
 
     if error and not body:
         verdict = "fail"
@@ -443,6 +613,7 @@ def verify_url(url: str, timeout: float = 12.0) -> FetchCheck:
         title=str(metadata.get("title", "")),
         description=str(metadata.get("description", "")),
         metadata=metadata,
+        links=links,
         blocked_signals=signals,
         error=error,
         elapsed_ms=elapsed_ms,
@@ -1131,6 +1302,60 @@ def dedupe_and_rank(results: list[SearchResult], query: str) -> list[SearchResul
     return sorted(best.values(), key=lambda item: item.rank_score, reverse=True)
 
 
+def build_discovery_results(
+    run: SearchRun,
+    query: str,
+    *,
+    dig_pages: int,
+    include_offsite: bool,
+) -> list[SearchResult]:
+    if dig_pages <= 0:
+        return []
+
+    parent_by_url: dict[str, str] = {}
+    candidates: list[tuple[float, dict[str, str]]] = []
+    seen: set[str] = {result.canonical_url or canonicalize_url(result.url) for result in run.results}
+    for check in run.fetched_urls:
+        parent = check.final_url or check.url
+        for link in check.links:
+            url = canonicalize_url(link.get("url", ""))
+            if not url or url in seen:
+                continue
+            if not include_offsite and not same_site(parent, url):
+                continue
+            score = discovered_link_score(link, query)
+            if score <= 0:
+                continue
+            seen.add(url)
+            parent_by_url[url] = parent
+            candidates.append((score, {"url": url, "text": link.get("text", "")}))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    discovered: list[SearchResult] = []
+    for score, link in candidates[:dig_pages]:
+        url = link["url"]
+        title = link.get("text") or urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1] or url
+        discovered.append(
+            result(
+                source="page_discovery",
+                pack="discovery",
+                source_type="page",
+                query_variant=query,
+                title=title,
+                url=url,
+                snippet=f"Discovered from {parent_by_url.get(url, '')}",
+                score=2.0 + score,
+                metadata={
+                    "parent_url": parent_by_url.get(url, ""),
+                    "link_text": link.get("text", ""),
+                    "trust_weight": 1.8,
+                    "discovery": "public_page_link",
+                },
+            )
+        )
+    return discovered
+
+
 def run_search(
     query: str,
     *,
@@ -1138,6 +1363,10 @@ def run_search(
     packs: list[str] | None = None,
     limit: int = 8,
     fetch_top: int = 5,
+    detective: bool = False,
+    dig_pages: int = 0,
+    max_page_links: int = 12,
+    include_offsite: bool = False,
     locale: str = "ko-KR",
     timeout: float = 12.0,
 ) -> SearchRun:
@@ -1145,7 +1374,15 @@ def run_search(
     selected_packs = packs or ["news", "community", "tech", "research"]
     variants = variants_for_depth(query, depth)
     context = SearchContext(original_query=query, depth=depth, locale=locale, limit=limit, timeout=timeout)
-    run = SearchRun(query=query, depth=depth, packs=selected_packs, locale=locale, query_variants=variants)
+    run = SearchRun(
+        query=query,
+        depth=depth,
+        packs=selected_packs,
+        locale=locale,
+        query_variants=variants,
+        detective=detective,
+        dig_pages=dig_pages,
+    )
 
     selected_sources = [source for source in SOURCES if source.pack in selected_packs]
     collected: list[SearchResult] = []
@@ -1166,7 +1403,7 @@ def run_search(
     run.results = dedupe_and_rank(collected, query)
 
     for item in run.results[: max(0, fetch_top)]:
-        check = verify_url(item.url, timeout=timeout)
+        check = verify_url(item.url, timeout=timeout, link_limit=max_page_links if detective or dig_pages else 0)
         run.fetched_urls.append(check)
         item.fetched = True
         item.fetch_verdict = check.verdict
@@ -1179,6 +1416,30 @@ def run_search(
         if check.metadata.get("canonical"):
             item.canonical_url = canonicalize_url(str(check.metadata["canonical"]))
         rank_result(item, query)
+
+    discovery_results = build_discovery_results(
+        run,
+        query,
+        dig_pages=dig_pages,
+        include_offsite=include_offsite,
+    )
+    for item in discovery_results:
+        check = verify_url(item.url, timeout=timeout)
+        run.fetched_urls.append(check)
+        run.discovered_urls.append(item.url)
+        item.fetched = True
+        item.fetch_verdict = check.verdict
+        item.metadata["fetch_status"] = check.status
+        item.metadata["fetch_body_size"] = check.body_size
+        if check.title:
+            item.title = check.title
+        if check.description:
+            item.snippet = check.description
+        if check.metadata.get("canonical"):
+            item.canonical_url = canonicalize_url(str(check.metadata["canonical"]))
+        rank_result(item, query)
+    if discovery_results:
+        run.results = dedupe_and_rank(run.results + discovery_results, query)
 
     run.results = dedupe_and_rank(run.results, query)
     run.elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -1216,6 +1477,7 @@ def format_report(run: SearchRun) -> str:
     lines.append(f"- Query: `{run.query}`")
     lines.append(f"- Depth: `{run.depth}`")
     lines.append(f"- Packs: `{', '.join(run.packs)}`")
+    lines.append(f"- Detective mode: `{'on' if run.detective else 'off'}`")
     lines.append(f"- Results: `{len(run.results)}`")
     lines.append(f"- Source errors: `{len(run.errors)}`")
     lines.append("")
@@ -1265,15 +1527,31 @@ def format_report(run: SearchRun) -> str:
     if run.fetched_urls:
         for check in run.fetched_urls:
             status = check.status if check.status is not None else "n/a"
+            link_note = f", links {len(check.links)}" if check.links else ""
             lines.append(
-                f"- {check.verdict} HTTP {status}, {check.body_size} bytes, {check.elapsed_ms} ms\n  {compact_url(check.final_url or check.url)}"
+                f"- {check.verdict} HTTP {status}, {check.body_size} bytes, {check.elapsed_ms} ms{link_note}\n  {compact_url(check.final_url or check.url)}"
             )
     else:
         lines.append("- `--fetch-top 0`이거나 확인할 상위 URL이 없습니다.")
     lines.append("")
 
+    lines.append("## 탐정 모드 발견 링크")
+    if run.discovered_urls:
+        discovery_items = [item for item in run.results if item.source == "page_discovery"]
+        for item in discovery_items[:10]:
+            parent = item.metadata.get("parent_url", "")
+            lines.append(f"- {item.title}\n  {compact_url(item.url)}")
+            if parent:
+                lines.append(f"  from {compact_url(str(parent))}")
+    elif run.detective:
+        lines.append("- 원문 페이지에서 쿼리와 관련도 높은 공개 링크를 추가로 찾지 못했습니다.")
+    else:
+        lines.append("- 꺼짐. 공개 페이지 링크 추적은 `--detective` 또는 `--dig-pages N`으로 켭니다.")
+    lines.append("")
+
     lines.append("## 빈틈/주의점")
     lines.append("- 결과는 공개 웹/API/RSS 기반이며, 로그인 전용 자료나 비공개 정보는 포함하지 않습니다.")
+    lines.append("- 탐정 모드는 공개 링크를 추적하지만 접근통제, 유료벽, 캡차, 로그인, 비공개 시스템을 우회하지 않습니다.")
     lines.append("- 커뮤니티 글은 사실 확정이 아니라 반응과 단서로 분리해서 해석해야 합니다.")
     lines.append("- 공개 API는 레이트리밋, 지역, 색인 지연 때문에 부분 실패가 날 수 있습니다.")
     if run.errors:
@@ -1298,6 +1576,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pack", default="news,community,tech,research", help="Comma-separated source packs")
     parser.add_argument("--limit", type=positive_int, default=8, help="Per-source result limit")
     parser.add_argument("--fetch-top", type=positive_int, default=5, help="Verify the top N result URLs")
+    parser.add_argument("--detective", action="store_true", help="Extract public links from fetched pages and follow the most relevant ones")
+    parser.add_argument("--dig-pages", type=positive_int, default=0, help="Fetch up to N discovered public links from top pages")
+    parser.add_argument("--max-page-links", type=positive_int, default=12, help="Maximum links to extract from each fetched page")
+    parser.add_argument("--include-offsite", action="store_true", help="Allow detective mode to follow relevant offsite links")
     parser.add_argument("--locale", default="ko-KR")
     parser.add_argument("--timeout", type=float, default=12.0)
     parser.add_argument("--json", action="store_true", help="Print JSON output")
@@ -1319,6 +1601,10 @@ def main(argv: list[str] | None = None) -> int:
         packs=packs,
         limit=args.limit,
         fetch_top=args.fetch_top,
+        detective=args.detective or args.dig_pages > 0,
+        dig_pages=args.dig_pages or (8 if args.detective else 0),
+        max_page_links=args.max_page_links,
+        include_offsite=args.include_offsite,
         locale=args.locale,
         timeout=args.timeout,
     )

@@ -41,6 +41,14 @@ python3 tools/deep_search.py "현대차 관세 하이브리드" --pack news,comm
 - `--locale ko-KR`
 - 리포트와 JSON 동시 출력 가능
 
+탐정 모드로 공개 근거 링크를 더 따라갈 수 있습니다.
+
+```bash
+python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
+```
+
+탐정 모드는 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지가 기록됩니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
+
 ## 소스팩
 
 | Pack | Sources |
@@ -61,6 +69,8 @@ python3 tools/deep_search.py "현대차 관세 하이브리드" --pack news,comm
 - `query_variant`
 - `score`, `rank_score`, `evidence_level`
 - `fetched`, `fetch_verdict`, `metadata`
+- 탐정 모드에서 원문 확인 URL의 `links`
+- 상위 페이지에서 따라간 `discovered_urls`
 - `errors`
 
 Markdown 리포트 순서:
@@ -80,5 +90,6 @@ Codex에서 이런 식으로 요청하면 이 스킬을 우선 사용합니다.
 - "해외 포함해서 커뮤니티 반응까지 봐줘"
 - "뉴스, 논문, 깃헙 같이 공개근거로 정리해줘"
 - "공개되어 있는데 잘 안 보이는 자료 위주로 찾아줘"
+- "탐정 모드로 상위 페이지 안의 관련 링크까지 따라가줘"
 
 단일 URL 읽기는 일반 URL 확인 흐름을 쓰고, 주제 기반 전방위 탐색은 Insane Deep Search를 사용합니다.

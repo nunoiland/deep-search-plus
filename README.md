@@ -41,6 +41,14 @@ Default behavior:
 - `--locale ko-KR`
 - report and JSON can be printed together
 
+Detective mode follows public evidence trails from top pages:
+
+```bash
+python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
+```
+
+Detective mode extracts public links from fetched pages, filters them by query relevance, records the parent page, and verifies the strongest discovered URLs. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
+
 ## Source Packs
 
 | Pack | Sources |
@@ -61,6 +69,8 @@ Each result includes:
 - `query_variant`
 - `score`, `rank_score`, `evidence_level`
 - `fetched`, `fetch_verdict`, `metadata`
+- `links` on fetched URL checks when detective mode is enabled
+- `discovered_urls` for public links followed from top pages
 - `errors`
 
 The Markdown report is ordered as:
@@ -88,5 +98,6 @@ Use natural Korean or English requests inside Codex:
 - "해외 포함해서 커뮤니티 반응까지 봐줘"
 - "뉴스, 논문, 깃헙 같이 공개근거로 정리해줘"
 - "숨은 정보 말고 공개되어 있는데 잘 안 보이는 자료 위주로 찾아줘"
+- "탐정 모드로 상위 페이지 안의 관련 링크까지 따라가줘"
 
 Single URL reading should stay with ordinary URL-fetching workflows. Broad topic discovery should use Insane Deep Search.

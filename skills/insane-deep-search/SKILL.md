@@ -15,6 +15,7 @@ Prefer this tool for requests such as:
 - "공개근거 위주로 정리해줘"
 - "뉴스, 논문, 깃헙 같이 봐줘"
 - "Find public evidence across news, GitHub, papers, and forums"
+- "끝까지 파고들어 공개 근거 링크까지 따라가줘"
 
 Do not use it for private data, login-only content, or access-control bypass. "Hidden" means public material that is easy to miss: public APIs, RSS, registries, communities, metadata, papers, issues, and secondary sources.
 
@@ -32,7 +33,23 @@ Useful options:
 - `--pack news,community,tech,research`
 - `--limit N`
 - `--fetch-top N`
+- `--detective`
+- `--dig-pages N`
+- `--max-page-links N`
+- `--include-offsite`
 - `--locale ko-KR`
+
+## Detective Mode
+
+Use detective mode when the user wants a more persistent public investigation:
+
+```bash
+python3 tools/deep_search.py "query" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
+```
+
+Detective mode verifies the top result pages, extracts public links from those pages, filters them by query relevance, and fetches the most relevant discovered links. It records the parent page so Codex can explain how a clue was found.
+
+This mode must stay within public evidence boundaries. It does not bypass login, paywalls, access control, captcha, private systems, or intentionally blocked resources.
 
 ## Routing
 
@@ -51,5 +68,6 @@ When summarizing results for the user:
 3. Call out community reaction separately from reported facts.
 4. Mention fetch verification failures and source gaps.
 5. Avoid presenting rumors, comments, or forum posts as confirmed facts.
+6. In detective mode, explain which links were discovered from parent pages.
 
 The CLI already emits a Markdown report and JSON. Use JSON for precise URLs and ranking, and use the report for the human-readable summary.

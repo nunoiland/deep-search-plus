@@ -135,6 +135,68 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(items[0].title, "Market update")
         self.assertEqual(items[0].canonical_url, "https://example.com/news")
 
+    def test_extract_links_normalizes_and_filters_public_links(self) -> None:
+        html = b"""
+        <html><body>
+          <a href="/news/openai-update?utm_source=x">OpenAI update</a>
+          <a href="mailto:test@example.com">mail</a>
+          <a href="/image.png">image</a>
+          <a href="/login">login</a>
+        </body></html>
+        """
+        links = deep_search.extract_links(html, "text/html", "https://example.com/root", limit=5)
+        self.assertEqual(links, [{"url": "https://example.com/news/openai-update", "text": "OpenAI update"}])
+
+    def test_detective_mode_follows_relevant_public_links(self) -> None:
+        original_sources = deep_search.SOURCES
+        original_fetch = deep_search.fetch_bytes
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            return [
+                deep_search.result(
+                    source="ok",
+                    pack="news",
+                    source_type="news",
+                    query_variant=variant,
+                    title="OpenAI article",
+                    url="https://example.com/news/openai",
+                    score=6,
+                )
+            ]
+
+        def fake_fetch(url: str, timeout: float = 12.0):
+            if url.endswith("/news/openai"):
+                body = b"""
+                <html><head><title>OpenAI article</title></head><body>
+                  <a href="/research/openai-codex-evidence">OpenAI Codex evidence</a>
+                  <a href="/privacy">Privacy</a>
+                </body></html>
+                """
+                return body, 200, "text/html", url, 10, ""
+            body = b"<html><head><title>Deep Evidence</title><meta name='description' content='OpenAI Codex evidence page'></head><body>ok</body></html>"
+            return body, 200, "text/html", url, 12, ""
+
+        try:
+            deep_search.SOURCES = [deep_search.SourceSpec("ok", "news", "news", 4, ok_adapter)]
+            deep_search.fetch_bytes = fake_fetch  # type: ignore[assignment]
+            run = deep_search.run_search(
+                "OpenAI Codex",
+                packs=["news"],
+                limit=1,
+                fetch_top=1,
+                detective=True,
+                dig_pages=1,
+                max_page_links=5,
+            )
+            self.assertIn("https://example.com/research/openai-codex-evidence", run.discovered_urls)
+            discovery = [item for item in run.results if item.source == "page_discovery"]
+            self.assertEqual(len(discovery), 1)
+            self.assertEqual(discovery[0].title, "Deep Evidence")
+            self.assertEqual(discovery[0].metadata["parent_url"], "https://example.com/news/openai")
+        finally:
+            deep_search.SOURCES = original_sources
+            deep_search.fetch_bytes = original_fetch  # type: ignore[assignment]
+
 
 if __name__ == "__main__":
     unittest.main()
