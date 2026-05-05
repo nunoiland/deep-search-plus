@@ -37,6 +37,7 @@ Useful options:
 - `--dig-pages N`
 - `--max-page-links N`
 - `--include-offsite`
+- `--same-site-only`
 - `--locale ko-KR`
 
 ## Detective Mode
@@ -47,7 +48,9 @@ Use detective mode when the user wants a more persistent public investigation:
 python3 tools/deep_search.py "query" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
 ```
 
-Detective mode verifies the top result pages, extracts public links from those pages, filters them by query relevance, and fetches the most relevant discovered links. It records the parent page so Codex can explain how a clue was found.
+Detective mode verifies the top result pages, extracts public links from those pages, filters them by query relevance, and fetches the most relevant discovered links. It records the parent page, discovery score, reason, and depth so Codex can explain how a clue was found.
+
+By default, detective mode may follow relevant public offsite links. Use `--same-site-only` when the user wants conservative same-domain discovery.
 
 This mode must stay within public evidence boundaries. It does not bypass login, paywalls, access control, captcha, private systems, or intentionally blocked resources.
 

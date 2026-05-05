@@ -41,13 +41,21 @@ Default behavior:
 - `--locale ko-KR`
 - report and JSON can be printed together
 
-Detective mode follows public evidence trails from top pages:
+Detective mode follows public evidence trails from top pages, including relevant public offsite links by default:
 
 ```bash
 python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
 ```
 
-Detective mode extracts public links from fetched pages, filters them by query relevance, records the parent page, and verifies the strongest discovered URLs. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
+Detective mode extracts public links from fetched pages, filters them by query relevance, records the parent page, and verifies the strongest discovered URLs. Use `--same-site-only` when you want conservative same-domain discovery. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
+
+## Structure
+
+The CLI entrypoint stays stable at `tools/deep_search.py`, while the implementation lives in `tools/insane_deep_search/`:
+
+- source catalog and policy defaults are centralized
+- HTTP verification, discovery, ranking, reporting, and CLI are separated
+- source adapters read endpoint and trust settings from the catalog instead of scattering them through the search logic
 
 ## Source Packs
 
@@ -71,6 +79,7 @@ Each result includes:
 - `fetched`, `fetch_verdict`, `metadata`
 - `links` on fetched URL checks when detective mode is enabled
 - `discovered_urls` for public links followed from top pages
+- discovery metadata such as `parent_url`, `discovery_score`, `discovery_reason`, and `discovery_depth`
 - `errors`
 
 The Markdown report is ordered as:
@@ -88,6 +97,7 @@ The Markdown report is ordered as:
 python3 tools/deep_search.py "Hyundai tariffs hybrid sales" --pack news,community --limit 4 --fetch-top 2 --json
 python3 tools/deep_search.py "openai agents sdk" --pack tech,research --depth quick --limit 2 --fetch-top 0 --report
 python3 tools/deep_search.py "Kia HEV EV margin buyback" --pack news,community,research --depth balanced
+python3 tools/deep_search.py "AI capex power grid" --detective --same-site-only --dig-pages 4 --report
 ```
 
 ## Codex Triggers

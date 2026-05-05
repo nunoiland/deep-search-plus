@@ -12,6 +12,9 @@ TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
 import deep_search  # noqa: E402
+from insane_deep_search import http as http_module  # noqa: E402
+from insane_deep_search import runner as runner_module  # noqa: E402
+from insane_deep_search.source_catalog import validate_source_definitions  # noqa: E402
 
 
 class DeepSearchTests(unittest.TestCase):
@@ -25,6 +28,22 @@ class DeepSearchTests(unittest.TestCase):
     def test_canonicalize_url_removes_tracking_and_normalizes_host(self) -> None:
         url = "https://Example.com:443/path/?utm_source=x&b=2&a=1#section"
         self.assertEqual(deep_search.canonicalize_url(url), "https://example.com/path?a=1&b=2")
+
+    def test_reexported_compatibility_entrypoint(self) -> None:
+        self.assertTrue(callable(deep_search.run_search))
+        self.assertTrue(callable(deep_search.main))
+        self.assertEqual(deep_search.SourceSpec.__name__, "SourceSpec")
+
+    def test_source_catalog_validates_cleanly(self) -> None:
+        self.assertEqual(validate_source_definitions(), [])
+        names = [source.name for source in deep_search.SOURCES]
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_source_urls_and_trust_weights_live_outside_adapters(self) -> None:
+        adapters = TOOLS / "insane_deep_search" / "sources" / "adapters.py"
+        text = adapters.read_text()
+        self.assertNotIn("https://", text)
+        self.assertNotIn("trust_weight", text)
 
     def test_dedupe_keeps_highest_ranked_result(self) -> None:
         first = deep_search.result(
@@ -76,8 +95,6 @@ class DeepSearchTests(unittest.TestCase):
         self.assertIn("github_repositories", report)
 
     def test_source_failure_keeps_partial_success(self) -> None:
-        original_sources = deep_search.SOURCES
-
         def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
             return [
                 deep_search.result(
@@ -94,33 +111,30 @@ class DeepSearchTests(unittest.TestCase):
         def bad_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
             raise RuntimeError("source unavailable")
 
-        try:
-            deep_search.SOURCES = [
-                deep_search.SourceSpec("ok", "news", "news", 4, ok_adapter),
-                deep_search.SourceSpec("bad", "news", "news", 4, bad_adapter),
-            ]
-            run = deep_search.run_search("openai", packs=["news"], limit=2, fetch_top=0)
-            self.assertEqual(len(run.results), 1)
-            self.assertEqual(len(run.errors), 1)
-            self.assertEqual(run.errors[0].source, "bad")
-        finally:
-            deep_search.SOURCES = original_sources
+        sources = [
+            deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/ok",), ok_adapter),
+            deep_search.SourceSpec("bad", "news", "news", 4, ("https://example.com/bad",), bad_adapter),
+        ]
+        run = deep_search.run_search("openai", packs=["news"], limit=2, fetch_top=0, sources=sources)
+        self.assertEqual(len(run.results), 1)
+        self.assertEqual(len(run.errors), 1)
+        self.assertEqual(run.errors[0].source, "bad")
 
     def test_fetch_verdict_strong_ok(self) -> None:
-        original_fetch = deep_search.fetch_bytes
+        original_fetch = http_module.fetch_bytes
 
         def fake_fetch(url: str, timeout: float = 12.0):
             body = b"<html><head><title>Example</title><meta name='description' content='Desc'></head><body>" + b"x" * 2000 + b"</body></html>"
             return body, 200, "text/html", url, 15, ""
 
         try:
-            deep_search.fetch_bytes = fake_fetch  # type: ignore[assignment]
+            http_module.fetch_bytes = fake_fetch  # type: ignore[assignment]
             check = deep_search.verify_url("https://example.com")
             self.assertEqual(check.verdict, "strong_ok")
             self.assertEqual(check.title, "Example")
             self.assertEqual(check.description, "Desc")
         finally:
-            deep_search.fetch_bytes = original_fetch  # type: ignore[assignment]
+            http_module.fetch_bytes = original_fetch  # type: ignore[assignment]
 
     def test_google_news_rss_parsing(self) -> None:
         rss = """<?xml version="1.0" encoding="UTF-8" ?>
@@ -142,14 +156,14 @@ class DeepSearchTests(unittest.TestCase):
           <a href="mailto:test@example.com">mail</a>
           <a href="/image.png">image</a>
           <a href="/login">login</a>
+          <a href="/readme?activeTab=code">tab</a>
         </body></html>
         """
         links = deep_search.extract_links(html, "text/html", "https://example.com/root", limit=5)
         self.assertEqual(links, [{"url": "https://example.com/news/openai-update", "text": "OpenAI update"}])
 
-    def test_detective_mode_follows_relevant_public_links(self) -> None:
-        original_sources = deep_search.SOURCES
-        original_fetch = deep_search.fetch_bytes
+    def test_detective_mode_follows_relevant_public_offsite_links_by_default(self) -> None:
+        original_fetch = http_module.fetch_bytes
 
         def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
             return [
@@ -168,7 +182,7 @@ class DeepSearchTests(unittest.TestCase):
             if url.endswith("/news/openai"):
                 body = b"""
                 <html><head><title>OpenAI article</title></head><body>
-                  <a href="/research/openai-codex-evidence">OpenAI Codex evidence</a>
+                  <a href="https://evidence.example.org/research/openai-codex-evidence">OpenAI Codex evidence</a>
                   <a href="/privacy">Privacy</a>
                 </body></html>
                 """
@@ -177,8 +191,8 @@ class DeepSearchTests(unittest.TestCase):
             return body, 200, "text/html", url, 12, ""
 
         try:
-            deep_search.SOURCES = [deep_search.SourceSpec("ok", "news", "news", 4, ok_adapter)]
-            deep_search.fetch_bytes = fake_fetch  # type: ignore[assignment]
+            http_module.fetch_bytes = fake_fetch  # type: ignore[assignment]
+            sources = [deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/search",), ok_adapter)]
             run = deep_search.run_search(
                 "OpenAI Codex",
                 packs=["news"],
@@ -187,15 +201,60 @@ class DeepSearchTests(unittest.TestCase):
                 detective=True,
                 dig_pages=1,
                 max_page_links=5,
+                sources=sources,
             )
-            self.assertIn("https://example.com/research/openai-codex-evidence", run.discovered_urls)
+            self.assertIn("https://evidence.example.org/research/openai-codex-evidence", run.discovered_urls)
             discovery = [item for item in run.results if item.source == "page_discovery"]
             self.assertEqual(len(discovery), 1)
-            self.assertEqual(discovery[0].title, "Deep Evidence")
             self.assertEqual(discovery[0].metadata["parent_url"], "https://example.com/news/openai")
+            self.assertEqual(discovery[0].metadata["discovery_depth"], 1)
+            self.assertIn("url:openai", discovery[0].metadata["discovery_reason"])
         finally:
-            deep_search.SOURCES = original_sources
-            deep_search.fetch_bytes = original_fetch  # type: ignore[assignment]
+            http_module.fetch_bytes = original_fetch  # type: ignore[assignment]
+
+    def test_same_site_only_blocks_offsite_discovery(self) -> None:
+        original_verify = runner_module.verify_url
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            return [
+                deep_search.result(
+                    source="ok",
+                    pack="news",
+                    source_type="news",
+                    query_variant=variant,
+                    title="OpenAI article",
+                    url="https://example.com/news/openai",
+                    score=6,
+                )
+            ]
+
+        def fake_verify(url: str, timeout: float = 12.0, link_limit: int = 0):
+            return deep_search.FetchCheck(
+                url=url,
+                final_url=url,
+                status=200,
+                content_type="text/html",
+                body_size=2000,
+                verdict="strong_ok",
+                links=[{"url": "https://offsite.example.org/research/openai-codex", "text": "OpenAI Codex research"}],
+            )
+
+        try:
+            runner_module.verify_url = fake_verify  # type: ignore[assignment]
+            sources = [deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/search",), ok_adapter)]
+            run = deep_search.run_search(
+                "OpenAI Codex",
+                packs=["news"],
+                limit=1,
+                fetch_top=1,
+                detective=True,
+                dig_pages=1,
+                include_offsite=False,
+                sources=sources,
+            )
+            self.assertEqual(run.discovered_urls, [])
+        finally:
+            runner_module.verify_url = original_verify  # type: ignore[assignment]
 
 
 if __name__ == "__main__":

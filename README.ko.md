@@ -41,13 +41,21 @@ python3 tools/deep_search.py "현대차 관세 하이브리드" --pack news,comm
 - `--locale ko-KR`
 - 리포트와 JSON 동시 출력 가능
 
-탐정 모드로 공개 근거 링크를 더 따라갈 수 있습니다.
+탐정 모드로 공개 근거 링크를 더 따라갈 수 있습니다. 기본적으로 쿼리 관련도가 높은 공개 offsite 링크까지 후보로 봅니다.
 
 ```bash
 python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
 ```
 
-탐정 모드는 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지가 기록됩니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
+탐정 모드는 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지가 기록됩니다. 같은 사이트 안에서만 보수적으로 확인하려면 `--same-site-only`를 사용합니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
+
+## 구조
+
+CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools/insane_deep_search/` 패키지에 있습니다.
+
+- 소스 카탈로그와 정책 기본값을 중앙화했습니다.
+- HTTP 확인, 링크 발견, 랭킹, 리포트, CLI를 책임별로 분리했습니다.
+- 소스 어댑터는 엔드포인트와 trust 설정을 카탈로그에서 읽습니다.
 
 ## 소스팩
 
@@ -71,6 +79,7 @@ python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --
 - `fetched`, `fetch_verdict`, `metadata`
 - 탐정 모드에서 원문 확인 URL의 `links`
 - 상위 페이지에서 따라간 `discovered_urls`
+- 발견 링크 metadata: `parent_url`, `discovery_score`, `discovery_reason`, `discovery_depth`
 - `errors`
 
 Markdown 리포트 순서:
