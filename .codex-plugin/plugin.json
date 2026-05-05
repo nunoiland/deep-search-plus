@@ -1,0 +1,27 @@
+{
+  "name": "insane-deep-search",
+  "version": "0.1.0",
+  "description": "Codex-native public evidence search across news, communities, developer sources, registries, and research indexes.",
+  "author": {
+    "name": "nunoiland",
+    "url": "https://github.com/nunoiland"
+  },
+  "homepage": "https://github.com/nunoiland/insane-deep-search",
+  "repository": "https://github.com/nunoiland/insane-deep-search",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "deep-search",
+    "public-evidence",
+    "research",
+    "community-search",
+    "news",
+    "github",
+    "stackoverflow",
+    "huggingface",
+    "arxiv",
+    "crossref",
+    "reddit",
+    "hacker-news"
+  ]
+}

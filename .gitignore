@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+
+# Codex local state
+.codex/
+
+# Workspace artifacts
+*-workspace/
+
+# Environment
+.env
+.env.local
+.omc/

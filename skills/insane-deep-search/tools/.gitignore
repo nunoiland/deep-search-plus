@@ -1,0 +1,4 @@
+deep_search_*.json
+deep_search_*.md
+__pycache__/
+*.pyc
