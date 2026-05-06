@@ -1,6 +1,6 @@
-# Insane Deep Search
+# Deep Search plus
 
-Insane Deep Search is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report.
+Deep Search plus is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report.
 
 It is built for questions such as:
 
@@ -16,9 +16,9 @@ The goal is not private data, login-only content, or bypassing access controls. 
 Clone the repository and copy the skill into Codex:
 
 ```bash
-git clone https://github.com/nunoiland/insane-deep-search.git
+git clone https://github.com/nunoiland/deep-search-plus.git
 mkdir -p ~/.codex/skills
-cp -R insane-deep-search/skills/insane-deep-search ~/.codex/skills/insane-deep-search
+cp -R insane-deep-search/skills/insane-deep-search ~/.codex/skills/deep-search-plus
 ```
 
 Restart Codex after installing the skill.
@@ -28,7 +28,7 @@ Restart Codex after installing the skill.
 Run the tool directly from the skill directory:
 
 ```bash
-cd ~/.codex/skills/insane-deep-search
+cd ~/.codex/skills/deep-search-plus
 python3 tools/deep_search.py "openai agents sdk" --depth quick --pack tech,research --limit 3 --fetch-top 1 --json --report
 ```
 
