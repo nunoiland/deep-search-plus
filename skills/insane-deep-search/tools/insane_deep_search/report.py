@@ -43,8 +43,10 @@ def format_report(run: SearchRun) -> str:
     lines.append(f"- Packs: `{', '.join(run.packs)}`")
     lines.append(f"- Detective mode: `{'on' if run.detective else 'off'}`")
     lines.append(f"- Offsite discovery: `{'on' if run.include_offsite else 'off'}`")
+    lines.append(f"- Crawl depth: `{run.crawl_depth}`")
     lines.append(f"- Research mode: `{'on' if run.research else 'off'}`")
     lines.append(f"- Verify mode: `{run.verify_mode}`")
+    lines.append(f"- Local LLM: `{run.local_llm_mode}` `{run.local_llm_model}`")
     lines.append(f"- Results: `{len(run.results)}`")
     lines.append(f"- Result groups: `{len(run.result_groups)}`")
     lines.append(f"- Source errors: `{len(run.errors)}`")
@@ -56,6 +58,29 @@ def format_report(run: SearchRun) -> str:
             lines.append(result_line(item))
     else:
         lines.append("- 검색 결과가 없습니다. 쿼리를 더 넓게 바꾸거나 소스팩을 추가해 보세요.")
+    lines.append("")
+
+    lines.append("## 검색 커버리지")
+    if run.coverage:
+        for axis, details in run.coverage.items():
+            lines.append(
+                f"- {axis}: {details.get('status')} "
+                f"(count {details.get('count')}, strong {details.get('strong_count')}, quality {details.get('average_quality')})"
+            )
+    else:
+        lines.append("- 커버리지 정보가 없습니다.")
+    lines.append("")
+
+    lines.append("## 검증된 주장 / 약한 주장 / 커뮤니티 단독 반응")
+    if run.claims:
+        for claim in run.claims[:12]:
+            sources = ", ".join(claim.get("supporting_sources", []))
+            lines.append(
+                f"- {claim.get('status')} confidence {claim.get('confidence')}: {claim.get('claim')}\n"
+                f"  sources `{sources}`"
+            )
+    else:
+        lines.append("- 주장 ledger가 없습니다.")
     lines.append("")
 
     lines.append("## 소스별 발견")
@@ -123,6 +148,21 @@ def format_report(run: SearchRun) -> str:
         lines.append("- 꺼짐. 반복 검색은 `--research`로 켭니다.")
     lines.append("")
 
+    lines.append("## Planner Trace")
+    if run.planner_steps:
+        for step in run.planner_steps[:8]:
+            local = step.get("local_llm", {}) if isinstance(step.get("local_llm"), dict) else {}
+            planner = step.get("planner", "unknown")
+            model = local.get("used_model") or local.get("requested_model") or ""
+            fallback = local.get("fallback")
+            lines.append(f"- round {step.get('round')}: planner `{planner}`, model `{model}`, fallback `{fallback}`")
+            for item in step.get("generated", [])[:6] if isinstance(step.get("generated"), list) else []:
+                if isinstance(item, dict):
+                    lines.append(f"  - `{item.get('query')}` ({item.get('reason')})")
+    else:
+        lines.append("- planner trace가 없습니다.")
+    lines.append("")
+
     lines.append("## 원문 확인 결과")
     if run.fetched_urls:
         for check in run.fetched_urls:
@@ -149,6 +189,31 @@ def format_report(run: SearchRun) -> str:
         lines.append("- 원문 페이지에서 쿼리와 관련도 높은 공개 링크를 추가로 찾지 못했습니다.")
     else:
         lines.append("- 꺼짐. 공개 페이지 링크 추적은 `--detective` 또는 `--dig-pages N`으로 켭니다.")
+    lines.append("")
+
+    lines.append("## Crawl Trace")
+    if run.crawl_traces:
+        for trace in run.crawl_traces[:12]:
+            lines.append(
+                f"- depth {trace.get('depth')} {trace.get('fetch_verdict')}: {compact_url(str(trace.get('url') or ''))}"
+            )
+            parent = trace.get("parent_url")
+            if parent:
+                lines.append(f"  from {compact_url(str(parent))}")
+    else:
+        lines.append("- 재귀 crawl trace가 없습니다.")
+    lines.append("")
+
+    lines.append("## Local Runtime")
+    if run.local_llm:
+        attempted = ", ".join(str(item) for item in run.local_llm.get("attempted_models", []))
+        lines.append(
+            f"- local_llm available `{run.local_llm.get('available')}`, used `{run.local_llm.get('used_model')}`, attempted `{attempted}`"
+        )
+        if run.local_llm.get("error"):
+            lines.append(f"- local_llm error: {str(run.local_llm.get('error'))[:180]}")
+    lines.append(f"- cache: `{run.cache}` {run.cache_stats}")
+    lines.append(f"- retry: {run.retry_stats}")
     lines.append("")
 
     lines.append("## 빈틈/주의점")

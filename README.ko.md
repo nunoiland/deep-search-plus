@@ -1,6 +1,6 @@
 # Insane Deep Search
 
-Insane Deep Search는 Codex용 공개근거 딥검색 스킬입니다. 뉴스, 해외 커뮤니티, 개발자 플랫폼, 패키지 레지스트리, 논문/도서/위키 소스를 함께 검색하고, 랭킹된 JSON과 사람이 읽기 좋은 Markdown 리포트를 동시에 제공합니다.
+Insane Deep Search는 Codex용 공개근거 딥검색 스킬입니다. 뉴스, 해외 커뮤니티, 개발자 플랫폼, 패키지 레지스트리, 논문/도서/위키 소스를 함께 검색하고, 랭킹된 JSON과 사람이 읽기 좋은 Markdown 리포트를 동시에 제공합니다. 기본 CLI 프로필은 반복 검색, 재귀 공개 링크 탐색, claim ledger, 로컬 Ollama planner를 사용하는 heavy 딥서치로 동작합니다.
 
 이런 요청에 맞춰 설계했습니다.
 
@@ -29,7 +29,7 @@ cp -R insane-deep-search/skills/insane-deep-search ~/.codex/skills/insane-deep-s
 
 ```bash
 cd ~/.codex/skills/insane-deep-search
-python3 tools/deep_search.py "현대차 관세 하이브리드" --pack news,community --limit 3 --fetch-top 1 --json --report
+python3 tools/deep_search.py "현대차 관세 하이브리드" --json --report
 ```
 
 기본값:
@@ -37,17 +37,24 @@ python3 tools/deep_search.py "현대차 관세 하이브리드" --pack news,comm
 - `--depth deep`
 - `--pack news,community,tech,research`
 - `--limit 8`
-- `--fetch-top 5`
+- `--research` on, `--research-depth 4`, `--research-breadth 8`
+- `--verify-mode auto`
+- `--fetch-top 10`
+- `--dig-pages 16`, `--crawl-depth 3`, `--max-page-links 24`, `--max-total-fetches 60`
+- `--local-llm auto --local-llm-model gemma4:latest`
+- `--cache on`
 - `--locale ko-KR`
 - 리포트와 JSON 동시 출력 가능
 
-탐정 모드로 공개 근거 링크를 더 따라갈 수 있습니다. 기본적으로 쿼리 관련도가 높은 공개 offsite 링크까지 후보로 봅니다.
+빠른 실행은 `--quick`을 사용합니다. 이 옵션은 반복 검색, 로컬 LLM planner, URL fetch, 재귀 crawl을 끕니다.
+
+재귀 탐색으로 공개 근거 링크를 더 따라갈 수 있습니다. 기본적으로 쿼리 관련도가 높은 공개 offsite 링크까지 후보로 봅니다.
 
 ```bash
-python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
+python3 tools/deep_search.py "AI capex power grid" --dig-pages 16 --crawl-depth 3 --json --report
 ```
 
-탐정 모드는 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지가 기록됩니다. 같은 사이트 안에서만 보수적으로 확인하려면 `--same-site-only`를 사용합니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
+재귀 탐색은 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지와 parent chain이 기록됩니다. 같은 사이트 안에서만 보수적으로 확인하려면 `--same-site-only`를 사용합니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
 
 리서치 모드는 제한된 후속 검색을 반복하고, 중복 근거를 묶고, 소스 품질 신호를 추가합니다.
 
@@ -56,6 +63,8 @@ python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news comm
 ```
 
 `--verify-mode auto`를 쓰면 기본 fetch가 차단되거나 약할 때만 선택적으로 렌더링 검증을 시도합니다. `crawl4ai`는 선택 의존성이며 설치되어 있지 않아도 CLI는 동작합니다.
+
+로컬 LLM planner는 Ollama만 사용하며 외부 LLM API를 호출하지 않습니다. 기본 모델은 `gemma4:latest`이고, 실패하면 `qwen2.5:7b`, `llama3.2:3b`, 휴리스틱 순서로 fallback합니다. 로컬 모델을 끄려면 `--local-llm off`, 반드시 쓰려면 `--local-llm required`를 사용합니다. 모델별 timeout은 `DEEP_SEARCH_LOCAL_LLM_TIMEOUT`으로 조정할 수 있습니다.
 
 ## 구조
 
@@ -90,19 +99,22 @@ CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools
 - 탐정 모드에서 원문 확인 URL의 `links`
 - 상위 페이지에서 따라간 `discovered_urls`
 - 리서치 모드의 `research_rounds`, `result_groups`
-- 발견 링크 metadata: `parent_url`, `discovery_score`, `discovery_reason`, `discovery_depth`
+- 발견 링크 metadata: `parent_url`, `parent_chain`, `discovery_score`, `discovery_reason`, `discovery_depth`
+- `coverage`, `claims`, `planner_steps`, `crawl_traces`, `local_llm`, `cache_stats`, `retry_stats`
 - `errors`
 
 Markdown 리포트 순서:
 
 1. 핵심 요약
-2. 소스별 발견
-3. 커뮤니티 반응
-4. 기술/논문 근거
-5. 소스 품질/중복 묶음
-6. 후속 검색 라운드
-7. 원문 확인 결과
-8. 빈틈/주의점
+2. 검색 커버리지
+3. 검증된 주장 / 약한 주장 / 커뮤니티 단독 반응
+4. 소스별 발견
+5. 커뮤니티 반응
+6. 기술/논문 근거
+7. 소스 품질/중복 묶음
+8. 후속 검색 라운드와 planner trace
+9. 원문 확인, crawl trace, local runtime
+10. 빈틈/주의점
 
 ## 자연어 트리거
 

@@ -92,16 +92,28 @@ class SearchRun:
     detective: bool = False
     dig_pages: int = 0
     include_offsite: bool = True
+    crawl_depth: int = 1
+    max_total_fetches: int = 0
     research: bool = False
     research_depth: int = 0
     research_breadth: int = 0
     verify_mode: str = "basic"
+    local_llm_mode: str = "off"
+    local_llm_model: str = ""
+    cache: str = "off"
     results: list[SearchResult] = dataclasses.field(default_factory=list)
     errors: list[SearchError] = dataclasses.field(default_factory=list)
     fetched_urls: list[FetchCheck] = dataclasses.field(default_factory=list)
     discovered_urls: list[str] = dataclasses.field(default_factory=list)
     research_rounds: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     result_groups: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    coverage: dict[str, Any] = dataclasses.field(default_factory=dict)
+    claims: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    planner_steps: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    crawl_traces: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    local_llm: dict[str, Any] = dataclasses.field(default_factory=dict)
+    cache_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
+    retry_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
     elapsed_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,16 +126,28 @@ class SearchRun:
             "detective": self.detective,
             "dig_pages": self.dig_pages,
             "include_offsite": self.include_offsite,
+            "crawl_depth": self.crawl_depth,
+            "max_total_fetches": self.max_total_fetches,
             "research": self.research,
             "research_depth": self.research_depth,
             "research_breadth": self.research_breadth,
             "verify_mode": self.verify_mode,
+            "local_llm_mode": self.local_llm_mode,
+            "local_llm_model": self.local_llm_model,
+            "cache": self.cache,
             "results": [result.to_dict() for result in self.results],
             "errors": [error.to_dict() for error in self.errors],
             "fetched_urls": [fetch.to_dict() for fetch in self.fetched_urls],
             "discovered_urls": self.discovered_urls,
             "research_rounds": self.research_rounds,
             "result_groups": self.result_groups,
+            "coverage": self.coverage,
+            "claims": self.claims,
+            "planner_steps": self.planner_steps,
+            "crawl_traces": self.crawl_traces,
+            "local_llm": self.local_llm,
+            "cache_stats": self.cache_stats,
+            "retry_stats": self.retry_stats,
             "top_evidence_urls": [result.url for result in self.results[:10]],
             "elapsed_ms": self.elapsed_ms,
         }

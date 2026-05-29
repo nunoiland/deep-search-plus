@@ -6,6 +6,9 @@ import dataclasses
 
 
 USER_AGENT = "insane-deep-search/0.1 (+https://github.com/nunoiland/insane-deep-search)"
+DEFAULT_LOCAL_LLM_MODEL = "gemma4:latest"
+LOCAL_LLM_FALLBACK_MODELS = ("gemma4:latest", "qwen2.5:7b", "llama3.2:3b")
+DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 
 DEFAULT_PACKS = ("news", "community", "tech", "research")
 VALID_PACKS = frozenset(DEFAULT_PACKS)
@@ -140,6 +143,11 @@ class FetchPolicy:
     weak_failure_min_status: int = 500
     strong_min_bytes: int = 1200
     weak_min_bytes: int = 200
+    retry_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+    max_retries: int = 2
+    retry_backoff_seconds: float = 0.15
+    success_cache_ttl_seconds: int = 21_600
+    failure_cache_ttl_seconds: int = 1_800
 
 
 @dataclasses.dataclass(frozen=True)
@@ -155,13 +163,14 @@ class RankingPolicy:
 
 @dataclasses.dataclass(frozen=True)
 class DiscoveryPolicy:
-    default_dig_pages: int = 8
-    default_max_page_links: int = 12
+    default_dig_pages: int = 16
+    default_max_page_links: int = 24
     body_parse_limit: int = 500_000
     link_text_limit: int = 240
     candidate_limit: int = 60
     domain_limit: int = 3
-    max_depth: int = 1
+    max_depth: int = 3
+    max_total_fetches: int = 60
     trust_weight: float = 1.8
     article_path_bonus: float = 1.0
     text_hit_score: float = 2.5

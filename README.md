@@ -1,6 +1,6 @@
 # Deep Search plus
 
-Deep Search plus is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report.
+Deep Search plus is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report. The default CLI profile now runs a heavy local deep-search flow with iterative planning, recursive public-link crawling, claim grouping, and optional local Ollama planning.
 
 It is built for questions such as:
 
@@ -29,7 +29,7 @@ Run the tool directly from the skill directory:
 
 ```bash
 cd ~/.codex/skills/deep-search-plus
-python3 tools/deep_search.py "openai agents sdk" --depth quick --pack tech,research --limit 3 --fetch-top 1 --json --report
+python3 tools/deep_search.py "openai agents sdk" --json --report
 ```
 
 Default behavior:
@@ -37,17 +37,24 @@ Default behavior:
 - `--depth deep`
 - `--pack news,community,tech,research`
 - `--limit 8` per source
-- `--fetch-top 5`
+- `--research` on, `--research-depth 4`, `--research-breadth 8`
+- `--verify-mode auto`
+- `--fetch-top 10`
+- `--dig-pages 16`, `--crawl-depth 3`, `--max-page-links 24`, `--max-total-fetches 60`
+- `--local-llm auto --local-llm-model gemma4:latest`
+- `--cache on`
 - `--locale ko-KR`
 - report and JSON can be printed together
 
-Detective mode follows public evidence trails from top pages, including relevant public offsite links by default:
+Use `--quick` for a fast profile that disables iterative research, local LLM planning, URL fetching, and recursive crawling.
+
+Recursive discovery follows public evidence trails from top pages, including relevant public offsite links by default:
 
 ```bash
-python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --detective --dig-pages 8 --json --report
+python3 tools/deep_search.py "AI capex power grid" --dig-pages 16 --crawl-depth 3 --json --report
 ```
 
-Detective mode extracts public links from fetched pages, filters them by query relevance, records the parent page, and verifies the strongest discovered URLs. Use `--same-site-only` when you want conservative same-domain discovery. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
+The crawler extracts public links from fetched pages, filters them by query relevance, records the parent chain, and verifies the strongest discovered URLs. Use `--same-site-only` when you want conservative same-domain discovery. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
 
 Research mode runs bounded follow-up searches, groups duplicates, and adds source quality signals:
 
@@ -56,6 +63,8 @@ python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news comm
 ```
 
 Use `--verify-mode auto` to try optional rendered verification only when the basic fetch is blocked or weak. `crawl4ai` is optional; the CLI still works when it is not installed.
+
+Local LLM planning uses Ollama only and never calls hosted LLM APIs. The preferred model is `gemma4:latest`, falling back to `qwen2.5:7b`, `llama3.2:3b`, then deterministic heuristics. Use `--local-llm off` to disable local model planning or `--local-llm required` to fail clearly when Ollama is unavailable. `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` controls the per-model timeout.
 
 ## Structure
 
@@ -90,19 +99,22 @@ Each result includes:
 - `links` on fetched URL checks when detective mode is enabled
 - `discovered_urls` for public links followed from top pages
 - `research_rounds` and `result_groups` when research mode is enabled
-- discovery metadata such as `parent_url`, `discovery_score`, `discovery_reason`, and `discovery_depth`
+- discovery metadata such as `parent_url`, `parent_chain`, `discovery_score`, `discovery_reason`, and `discovery_depth`
+- `coverage`, `claims`, `planner_steps`, `crawl_traces`, `local_llm`, `cache_stats`, and `retry_stats`
 - `errors`
 
 The Markdown report is ordered as:
 
 1. Key summary
-2. Source findings
-3. Community reaction
-4. Technical and research evidence
-5. Source quality and duplicate groups
-6. Follow-up search rounds
-7. Fetch verification
-8. Gaps and cautions
+2. Search coverage
+3. Verified, weak, and community-only claims
+4. Source findings
+5. Community reaction
+6. Technical and research evidence
+7. Source quality and duplicate groups
+8. Follow-up search rounds and planner trace
+9. Fetch verification, crawl trace, local runtime
+10. Gaps and cautions
 
 ## Examples
 
@@ -110,8 +122,9 @@ The Markdown report is ordered as:
 python3 tools/deep_search.py "Hyundai tariffs hybrid sales" --pack news,community --limit 4 --fetch-top 2 --json
 python3 tools/deep_search.py "openai agents sdk" --pack tech,research --depth quick --limit 2 --fetch-top 0 --report
 python3 tools/deep_search.py "Kia HEV EV margin buyback" --pack news,community,research --depth balanced
-python3 tools/deep_search.py "AI capex power grid" --detective --same-site-only --dig-pages 4 --report
-python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --research --verify-mode auto --fetch-top 3 --json --report
+python3 tools/deep_search.py "AI capex power grid" --same-site-only --dig-pages 4 --crawl-depth 2 --report
+python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --local-llm auto --json --report
+python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --quick --json --report
 ```
 
 ## Codex Triggers

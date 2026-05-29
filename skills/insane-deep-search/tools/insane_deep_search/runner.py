@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import time
 
-from .config import DEFAULT_PACKS
+from .claims import build_claim_ledger
+from .config import DEFAULT_LOCAL_LLM_MODEL, DEFAULT_PACKS, DISCOVERY_POLICY
 from .dedupe import group_results
 from .discovery import build_discovery_results
-from .http import verify_url
+from .http import reset_transport_stats, set_transport_options, transport_stats, verify_url
 from .models import SearchContext, SearchError, SearchResult, SearchRun, SourceSpec
 from .quality import apply_quality_score
 from .ranking import rank_result
 from .render import should_render_fallback, verify_rendered_url
-from .research import follow_up_queries
+from .research import build_follow_up_plan, follow_up_queries, source_coverage
 from .sources import SOURCES
 from .text import canonicalize_url, generate_query_variants, unique
 
@@ -101,6 +102,51 @@ def collect_from_sources(
     return collected
 
 
+def update_local_llm_status(run: SearchRun, status: dict[str, object]) -> None:
+    if not status:
+        return
+    if not run.local_llm:
+        run.local_llm = dict(status)
+        return
+    attempted = list(run.local_llm.get("attempted_models", []))
+    for item in status.get("attempted_models", []) if isinstance(status.get("attempted_models"), list) else []:
+        if item not in attempted:
+            attempted.append(item)
+    run.local_llm.update(status)
+    run.local_llm["attempted_models"] = attempted
+
+
+def fetch_result(
+    item: SearchResult,
+    run: SearchRun,
+    *,
+    timeout: float,
+    link_limit: int,
+    verify_mode: str,
+    query: str,
+    discovery_depth: int,
+    append_discovered: bool = False,
+) -> None:
+    check = verify_for_mode(item.url, timeout=timeout, link_limit=link_limit, verify_mode=verify_mode)
+    check.metadata.setdefault("discovery_depth", discovery_depth)
+    check.metadata.setdefault("parent_chain", item.metadata.get("parent_chain", []))
+    run.fetched_urls.append(check)
+    if append_discovered:
+        run.discovered_urls.append(item.url)
+    item.fetched = True
+    item.fetch_verdict = check.verdict
+    item.metadata["fetch_status"] = check.status
+    item.metadata["fetch_body_size"] = check.body_size
+    if check.title and not item.title:
+        item.title = check.title
+    if check.description and not item.snippet:
+        item.snippet = check.description
+    if check.metadata.get("canonical"):
+        item.canonical_url = canonicalize_url(str(check.metadata["canonical"]))
+    apply_quality_score(item)
+    rank_result(item, query)
+
+
 def run_search(
     query: str,
     *,
@@ -111,6 +157,8 @@ def run_search(
     detective: bool = False,
     dig_pages: int = 0,
     max_page_links: int = 12,
+    crawl_depth: int = 1,
+    max_total_fetches: int = 0,
     include_offsite: bool = True,
     locale: str = "ko-KR",
     timeout: float = 12.0,
@@ -119,9 +167,19 @@ def run_search(
     research_depth: int = 2,
     research_breadth: int = 4,
     verify_mode: str = "basic",
+    local_llm_mode: str = "off",
+    local_llm_model: str = DEFAULT_LOCAL_LLM_MODEL,
+    cache: str = "off",
+    cache_dir: str | None = None,
 ) -> SearchRun:
     if verify_mode not in {"basic", "auto", "rendered"}:
         raise ValueError(f"Unknown verify_mode: {verify_mode}")
+    if local_llm_mode not in {"auto", "off", "required"}:
+        raise ValueError(f"Unknown local_llm mode: {local_llm_mode}")
+    if cache not in {"on", "off"}:
+        raise ValueError(f"Unknown cache mode: {cache}")
+    set_transport_options(cache_enabled=cache == "on", cache_dir=cache_dir)
+    reset_transport_stats()
     started = time.monotonic()
     selected_packs = packs or list(DEFAULT_PACKS)
     variants = variants_for_depth(query, depth)
@@ -135,13 +193,20 @@ def run_search(
         detective=detective,
         dig_pages=dig_pages,
         include_offsite=include_offsite,
+        crawl_depth=crawl_depth,
+        max_total_fetches=max_total_fetches,
         research=research,
         research_depth=research_depth if research else 0,
         research_breadth=research_breadth if research else 0,
         verify_mode=verify_mode,
+        local_llm_mode=local_llm_mode,
+        local_llm_model=local_llm_model,
+        cache=cache,
+        local_llm={"provider": "ollama", "mode": local_llm_mode, "requested_model": local_llm_model, "available": False, "fallback": local_llm_mode == "off"},
     )
 
     selected_sources = [source for source in (sources or SOURCES) if source.pack in selected_packs]
+    llm_claim_candidates: list[dict[str, object]] = []
     collected = collect_from_sources(
         variants=variants,
         selected_sources=selected_sources,
@@ -154,12 +219,27 @@ def run_search(
         run.research_rounds.append({"round": 0, "queries": variants, "result_count": len(collected), "reason": "initial variants"})
 
     run.results, run.result_groups = dedupe_rank_and_group(collected, query)
+    run.coverage = source_coverage(run.results)
 
     if research:
         seen_queries = {variant.lower() for variant in variants}
         total_rounds = max(1, research_depth)
         for round_index in range(1, total_rounds):
-            followups = [item for item in follow_up_queries(query, run.results, research_breadth) if item["query"].lower() not in seen_queries]
+            followups, planner_step, claim_candidates = build_follow_up_plan(
+                query,
+                run.results,
+                research_breadth,
+                coverage=run.coverage,
+                local_llm_mode=local_llm_mode,
+                local_llm_model=local_llm_model,
+            )
+            planner_step["round"] = round_index
+            run.planner_steps.append(planner_step)
+            update_local_llm_status(run, planner_step.get("local_llm", {}) if isinstance(planner_step.get("local_llm"), dict) else {})
+            if local_llm_mode == "required" and run.local_llm.get("fallback"):
+                raise RuntimeError(f"local LLM required but unavailable: {run.local_llm.get('error') or 'unknown error'}")
+            llm_claim_candidates.extend(claim_candidates)
+            followups = [item for item in followups if item["query"].lower() not in seen_queries]
             if not followups:
                 run.research_rounds.append({"round": round_index, "queries": [], "result_count": 0, "reason": "no novel follow-up queries"})
                 break
@@ -176,54 +256,64 @@ def run_search(
             collected.extend(round_results)
             run.research_rounds.append({"round": round_index, "queries": followups, "result_count": len(round_results), "reason": "follow-up expansion"})
             run.results, run.result_groups = dedupe_rank_and_group(collected, query)
+            run.coverage = source_coverage(run.results)
 
-    for item in run.results[: max(0, fetch_top)]:
-        check = verify_for_mode(
-            item.url,
+    effective_max_fetches = max_total_fetches if max_total_fetches > 0 else fetch_top + dig_pages
+    for item in run.results[: max(0, min(fetch_top, effective_max_fetches))]:
+        fetch_result(
+            item,
+            run,
             timeout=timeout,
             link_limit=max_page_links if detective or dig_pages else 0,
             verify_mode=verify_mode,
+            query=query,
+            discovery_depth=0,
         )
-        run.fetched_urls.append(check)
-        item.fetched = True
-        item.fetch_verdict = check.verdict
-        item.metadata["fetch_status"] = check.status
-        item.metadata["fetch_body_size"] = check.body_size
-        if check.title and not item.title:
-            item.title = check.title
-        if check.description and not item.snippet:
-            item.snippet = check.description
-        if check.metadata.get("canonical"):
-            item.canonical_url = canonicalize_url(str(check.metadata["canonical"]))
-        apply_quality_score(item)
-        rank_result(item, query)
 
-    discovery_results = build_discovery_results(
-        run,
-        query,
-        dig_pages=dig_pages,
-        include_offsite=include_offsite,
-    )
-    for item in discovery_results:
-        check = verify_for_mode(item.url, timeout=timeout, link_limit=0, verify_mode=verify_mode)
-        run.fetched_urls.append(check)
-        run.discovered_urls.append(item.url)
-        item.fetched = True
-        item.fetch_verdict = check.verdict
-        item.metadata["fetch_status"] = check.status
-        item.metadata["fetch_body_size"] = check.body_size
-        if check.title:
-            item.title = check.title
-        if check.description:
-            item.snippet = check.description
-        if check.metadata.get("canonical"):
-            item.canonical_url = canonicalize_url(str(check.metadata["canonical"]))
-        apply_quality_score(item)
-        rank_result(item, query)
-    if discovery_results:
-        collected.extend(discovery_results)
-        run.results, run.result_groups = dedupe_rank_and_group(collected, query)
+    if dig_pages > 0 and effective_max_fetches > len(run.fetched_urls):
+        for depth_level in range(1, max(1, crawl_depth) + 1):
+            remaining_discoveries = max(0, dig_pages - len(run.discovered_urls))
+            remaining_fetches = max(0, effective_max_fetches - len(run.fetched_urls))
+            if remaining_discoveries <= 0 or remaining_fetches <= 0:
+                break
+            discovery_results = build_discovery_results(
+                run,
+                query,
+                dig_pages=min(remaining_discoveries, remaining_fetches),
+                include_offsite=include_offsite,
+                current_depth=depth_level,
+            )
+            if not discovery_results:
+                break
+            for item in discovery_results:
+                link_limit = max_page_links if depth_level < crawl_depth else 0
+                fetch_result(
+                    item,
+                    run,
+                    timeout=timeout,
+                    link_limit=link_limit,
+                    verify_mode=verify_mode,
+                    query=query,
+                    discovery_depth=depth_level,
+                    append_discovered=True,
+                )
+                run.crawl_traces.append(
+                    {
+                        "url": item.url,
+                        "parent_url": item.metadata.get("parent_url", ""),
+                        "parent_chain": item.metadata.get("parent_chain", []),
+                        "depth": depth_level,
+                        "reason": item.metadata.get("discovery_reason", []),
+                        "fetch_verdict": item.fetch_verdict,
+                    }
+                )
+            collected.extend(discovery_results)
+            run.results, run.result_groups = dedupe_rank_and_group(collected, query)
+            run.coverage = source_coverage(run.results)
 
     run.results, run.result_groups = dedupe_rank_and_group(collected if collected else run.results, query)
+    run.coverage = source_coverage(run.results)
+    run.claims = build_claim_ledger(query, run.results, run.result_groups, llm_claim_candidates)
+    run.cache_stats, run.retry_stats = transport_stats()
     run.elapsed_ms = int((time.monotonic() - started) * 1000)
     return run

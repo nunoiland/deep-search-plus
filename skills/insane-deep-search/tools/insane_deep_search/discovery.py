@@ -45,18 +45,26 @@ def build_discovery_results(
     *,
     dig_pages: int,
     include_offsite: bool,
+    current_depth: int = 1,
 ) -> list[SearchResult]:
     if dig_pages <= 0:
         return []
 
     parent_by_url: dict[str, str] = {}
+    parent_chain_by_url: dict[str, list[str]] = {}
     reason_by_url: dict[str, list[str]] = {}
     candidates: list[tuple[float, dict[str, str]]] = []
     seen: set[str] = {result.canonical_url or canonicalize_url(result.url) for result in run.results}
+    seen.update(canonicalize_url(url) for url in run.discovered_urls)
+    seen.update(canonicalize_url(check.final_url or check.url) for check in run.fetched_urls)
     domain_counts: Counter[str] = Counter()
 
     for check in run.fetched_urls:
+        check_depth = int(check.metadata.get("discovery_depth") or 0)
+        if check_depth != current_depth - 1:
+            continue
         parent = check.final_url or check.url
+        parent_chain = [str(item) for item in check.metadata.get("parent_chain", []) if item]
         for link in check.links:
             url = canonicalize_url(link.get("url", ""))
             if not url or url in seen:
@@ -72,6 +80,7 @@ def build_discovery_results(
             seen.add(url)
             domain_counts[domain] += 1
             parent_by_url[url] = parent
+            parent_chain_by_url[url] = [*parent_chain, parent]
             reason_by_url[url] = reasons
             candidates.append((score, {"url": url, "text": link.get("text", "")}))
             if len(candidates) >= DISCOVERY_POLICY.candidate_limit:
@@ -94,12 +103,13 @@ def build_discovery_results(
                 score=2.0 + score,
                 metadata={
                     "parent_url": parent_by_url.get(url, ""),
+                    "parent_chain": parent_chain_by_url.get(url, []),
                     "link_text": link.get("text", ""),
                     "trust_weight": DISCOVERY_POLICY.trust_weight,
                     "discovery": "public_page_link",
                     "discovery_score": round(score, 3),
                     "discovery_reason": reason_by_url.get(url, []),
-                    "discovery_depth": DISCOVERY_POLICY.max_depth,
+                    "discovery_depth": current_depth,
                 },
             )
         )
