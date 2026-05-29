@@ -32,21 +32,24 @@ cd ~/.codex/skills/insane-deep-search
 python3 tools/deep_search.py "현대차 관세 하이브리드" --json --report
 ```
 
-기본값:
+기본값은 1분 안쪽의 쓸 만한 결과를 목표로 합니다.
 
-- `--depth deep`
+- `--depth balanced`
 - `--pack news,community,tech,research`
 - `--limit 8`
-- `--research` on, `--research-depth 4`, `--research-breadth 8`
-- `--verify-mode auto`
-- `--fetch-top 10`
-- `--dig-pages 16`, `--crawl-depth 3`, `--max-page-links 24`, `--max-total-fetches 60`
-- `--local-llm auto --local-llm-model gemma4:latest`
+- `--research` on, `--research-depth 2`, `--research-breadth 4`
+- `--verify-mode basic`
+- `--fetch-top 3`
+- `--dig-pages 4`, `--crawl-depth 1`, `--max-page-links 24`, `--max-total-fetches 12`
+- `--local-llm auto --local-llm-model gemma4:latest --local-llm-timeout 5`
+- `--max-workers 8`, `--time-budget 60`
 - `--cache on`
 - `--locale ko-KR`
+- 진행 로그는 기본적으로 stderr에 출력하며 `--quiet`으로 끌 수 있음
 - 리포트와 JSON 동시 출력 가능
 
 빠른 실행은 `--quick`을 사용합니다. 이 옵션은 반복 검색, 로컬 LLM planner, URL fetch, 재귀 crawl을 끕니다.
+기존 98%급 무거운 탐색은 `--ultra`를 사용합니다. 더 깊은 후속 라운드, 더 많은 URL 확인, 렌더링 fallback, crawl depth 3을 사용하므로 몇 분 걸릴 수 있습니다.
 
 재귀 탐색으로 공개 근거 링크를 더 따라갈 수 있습니다. 기본적으로 쿼리 관련도가 높은 공개 offsite 링크까지 후보로 봅니다.
 
@@ -64,7 +67,7 @@ python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news comm
 
 `--verify-mode auto`를 쓰면 기본 fetch가 차단되거나 약할 때만 선택적으로 렌더링 검증을 시도합니다. `crawl4ai`는 선택 의존성이며 설치되어 있지 않아도 CLI는 동작합니다.
 
-로컬 LLM planner는 Ollama만 사용하며 외부 LLM API를 호출하지 않습니다. 기본 모델은 `gemma4:latest`이고, 실패하면 `qwen2.5:7b`, `llama3.2:3b`, 휴리스틱 순서로 fallback합니다. 로컬 모델을 끄려면 `--local-llm off`, 반드시 쓰려면 `--local-llm required`를 사용합니다. 모델별 timeout은 `DEEP_SEARCH_LOCAL_LLM_TIMEOUT`으로 조정할 수 있습니다.
+로컬 LLM planner는 Ollama만 사용하며 외부 LLM API를 호출하지 않습니다. 기본 CLI는 `gemma4:latest`를 짧게 한 번 시도한 뒤 휴리스틱으로 fallback합니다. `--ultra`는 `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, 휴리스틱 순서의 넓은 fallback을 복원합니다. 로컬 모델을 끄려면 `--local-llm off`, 반드시 쓰려면 `--local-llm required`를 사용합니다. 모델별 timeout은 `--local-llm-timeout` 또는 `DEEP_SEARCH_LOCAL_LLM_TIMEOUT`으로 조정할 수 있습니다.
 
 ## 구조
 

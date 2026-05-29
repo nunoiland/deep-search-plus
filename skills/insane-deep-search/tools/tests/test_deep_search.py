@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import sys
+import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
@@ -205,6 +206,138 @@ class DeepSearchTests(unittest.TestCase):
         self.assertLessEqual(len(run.research_rounds[1]["queries"]), 2)
         self.assertEqual(len(calls), len(set(calls)))
 
+    def test_followup_queries_target_matching_source_packs(self) -> None:
+        calls = []
+
+        def adapter_for(name: str, pack: str, source_type: str):
+            def adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+                calls.append((name, pack, variant))
+                return [
+                    deep_search.result(
+                        source=name,
+                        pack=pack,
+                        source_type=source_type,
+                        query_variant=variant,
+                        title=f"OpenAI Codex {name}",
+                        url=f"https://{name}.example/{len(calls)}",
+                        score=2,
+                    )
+                ]
+
+            return adapter
+
+        sources = [
+            deep_search.SourceSpec("news_src", "news", "news", 4, ("https://example.com/news",), adapter_for("news_src", "news", "news")),
+            deep_search.SourceSpec("community_src", "community", "community", 1, ("https://example.com/community",), adapter_for("community_src", "community", "community")),
+            deep_search.SourceSpec("tech_src", "tech", "developer", 3, ("https://example.com/tech",), adapter_for("tech_src", "tech", "developer")),
+            deep_search.SourceSpec("research_src", "research", "research", 4, ("https://example.com/research",), adapter_for("research_src", "research", "research")),
+        ]
+        deep_search.run_search(
+            "OpenAI Codex",
+            packs=["news", "community", "tech", "research"],
+            depth="quick",
+            limit=1,
+            fetch_top=0,
+            research=True,
+            research_depth=2,
+            research_breadth=5,
+            local_llm_mode="off",
+            sources=sources,
+            max_workers=4,
+        )
+
+        followup_calls = calls[4:]
+        self.assertTrue(followup_calls)
+        for _name, pack, variant in followup_calls:
+            if "latest reporting" in variant:
+                self.assertEqual(pack, "news")
+            if "community reaction discussion" in variant:
+                self.assertEqual(pack, "community")
+            if "github issues implementation" in variant:
+                self.assertEqual(pack, "tech")
+            if "paper citations DOI" in variant:
+                self.assertEqual(pack, "research")
+            self.assertNotEqual(variant, "OpenAI Codex page")
+
+    def test_parallel_source_collection_keeps_partial_failure(self) -> None:
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            time.sleep(0.01)
+            return [deep_search.result(source="ok", pack="news", source_type="news", query_variant=variant, title="OpenAI", url="https://example.com/ok")]
+
+        def bad_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            raise RuntimeError("parallel source unavailable")
+
+        sources = [
+            deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/ok",), ok_adapter),
+            deep_search.SourceSpec("bad", "news", "news", 4, ("https://example.com/bad",), bad_adapter),
+        ]
+        run = deep_search.run_search("OpenAI Codex", packs=["news"], depth="quick", limit=1, fetch_top=0, sources=sources, max_workers=2)
+        self.assertEqual(len(run.results), 1)
+        self.assertEqual(len(run.errors), 1)
+        self.assertEqual(run.errors[0].source, "bad")
+
+    def test_retry_limited_source_is_not_recalled_in_followup_round(self) -> None:
+        calls = {"bad": 0, "ok": 0}
+
+        def bad_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            calls["bad"] += 1
+            raise RuntimeError("HTTP 429")
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            calls["ok"] += 1
+            return [
+                deep_search.result(
+                    source="ok",
+                    pack="community",
+                    source_type="community",
+                    query_variant=variant,
+                    title="OpenAI Codex community",
+                    url=f"https://example.com/{calls['ok']}",
+                )
+            ]
+
+        sources = [
+            deep_search.SourceSpec("bad", "community", "community", 1, ("https://example.com/bad",), bad_adapter),
+            deep_search.SourceSpec("ok", "community", "community", 1, ("https://example.com/ok",), ok_adapter),
+        ]
+        deep_search.run_search(
+            "OpenAI Codex",
+            packs=["community"],
+            depth="quick",
+            limit=1,
+            fetch_top=0,
+            research=True,
+            research_depth=2,
+            research_breadth=2,
+            sources=sources,
+        )
+        self.assertEqual(calls["bad"], 1)
+        self.assertGreater(calls["ok"], 1)
+
+    def test_time_budget_stops_followup_and_fetch_scheduling(self) -> None:
+        calls = []
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            calls.append(variant)
+            time.sleep(0.002)
+            return [deep_search.result(source="ok", pack="news", source_type="news", query_variant=variant, title="OpenAI", url="https://example.com/ok")]
+
+        run = deep_search.run_search(
+            "OpenAI Codex",
+            packs=["news"],
+            depth="quick",
+            limit=1,
+            fetch_top=1,
+            research=True,
+            research_depth=2,
+            research_breadth=2,
+            time_budget=0.000001,
+            sources=[deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/ok",), ok_adapter)],
+        )
+        self.assertEqual(calls, ["OpenAI Codex"])
+        self.assertEqual(run.fetched_urls, [])
+        self.assertEqual(run.research_rounds[-1]["reason"], "time budget exhausted")
+
     def test_fetch_verdict_strong_ok(self) -> None:
         original_fetch = http_module.fetch_bytes
 
@@ -361,19 +494,52 @@ class DeepSearchTests(unittest.TestCase):
         finally:
             runner_module.verify_url = original_verify  # type: ignore[assignment]
 
-    def test_cli_defaults_use_heavy_deep_profile(self) -> None:
+    def test_cli_defaults_use_fast_deep_profile(self) -> None:
         parser = deep_search.build_parser()
         args = parser.parse_args(["OpenAI Codex"])
+        self.assertEqual(args.depth, "balanced")
         self.assertTrue(args.research)
-        self.assertEqual(args.research_depth, 4)
-        self.assertEqual(args.research_breadth, 8)
-        self.assertEqual(args.verify_mode, "auto")
-        self.assertEqual(args.fetch_top, 10)
-        self.assertEqual(args.dig_pages, 16)
-        self.assertEqual(args.crawl_depth, 3)
-        self.assertEqual(args.max_total_fetches, 60)
+        self.assertEqual(args.research_depth, 2)
+        self.assertEqual(args.research_breadth, 4)
+        self.assertEqual(args.verify_mode, "basic")
+        self.assertEqual(args.fetch_top, 3)
+        self.assertEqual(args.dig_pages, 4)
+        self.assertEqual(args.crawl_depth, 1)
+        self.assertEqual(args.max_total_fetches, 12)
+        self.assertEqual(args.timeout, 6.0)
+        self.assertEqual(args.max_workers, 8)
+        self.assertEqual(args.time_budget, 60.0)
+        self.assertEqual(args.local_llm_timeout, 5.0)
         self.assertEqual(args.local_llm, "auto")
         self.assertEqual(args.local_llm_model, "gemma4:latest")
+
+    def test_ultra_profile_restores_heavy_deep_runtime(self) -> None:
+        original_run_search = cli_module.run_search
+        captured = {}
+
+        def fake_run_search(query: str, **kwargs):
+            captured.update(kwargs)
+            return deep_search.SearchRun(query=query, depth=kwargs["depth"], packs=kwargs["packs"], locale="ko-KR", query_variants=[query])
+
+        try:
+            cli_module.run_search = fake_run_search  # type: ignore[assignment]
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                self.assertEqual(cli_module.main(["OpenAI Codex", "--ultra", "--json"]), 0)
+        finally:
+            cli_module.run_search = original_run_search  # type: ignore[assignment]
+
+        self.assertEqual(captured["depth"], "deep")
+        self.assertTrue(captured["research"])
+        self.assertEqual(captured["research_depth"], 4)
+        self.assertEqual(captured["research_breadth"], 8)
+        self.assertEqual(captured["verify_mode"], "auto")
+        self.assertEqual(captured["fetch_top"], 10)
+        self.assertEqual(captured["dig_pages"], 16)
+        self.assertEqual(captured["crawl_depth"], 3)
+        self.assertEqual(captured["max_total_fetches"], 60)
+        self.assertEqual(captured["local_llm_timeout"], 20.0)
+        self.assertTrue(captured["local_llm_fallback"])
+        self.assertEqual(captured["time_budget"], 0.0)
 
     def test_quick_profile_lowers_runtime_work(self) -> None:
         original_run_search = cli_module.run_search
@@ -385,7 +551,7 @@ class DeepSearchTests(unittest.TestCase):
 
         try:
             cli_module.run_search = fake_run_search  # type: ignore[assignment]
-            with redirect_stdout(StringIO()):
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                 self.assertEqual(cli_module.main(["OpenAI Codex", "--quick", "--json"]), 0)
         finally:
             cli_module.run_search = original_run_search  # type: ignore[assignment]
@@ -396,11 +562,66 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(captured["dig_pages"], 0)
         self.assertEqual(captured["verify_mode"], "basic")
         self.assertEqual(captured["local_llm_mode"], "off")
+        self.assertEqual(captured["local_llm_timeout"], 0.0)
+
+    def test_default_cli_passes_fast_runtime_controls(self) -> None:
+        original_run_search = cli_module.run_search
+        captured = {}
+
+        def fake_run_search(query: str, **kwargs):
+            captured.update(kwargs)
+            return deep_search.SearchRun(query=query, depth=kwargs["depth"], packs=kwargs["packs"], locale="ko-KR", query_variants=[query])
+
+        try:
+            cli_module.run_search = fake_run_search  # type: ignore[assignment]
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                self.assertEqual(cli_module.main(["OpenAI Codex", "--json"]), 0)
+        finally:
+            cli_module.run_search = original_run_search  # type: ignore[assignment]
+
+        self.assertEqual(captured["depth"], "balanced")
+        self.assertEqual(captured["max_workers"], 8)
+        self.assertEqual(captured["time_budget"], 60.0)
+        self.assertEqual(captured["local_llm_timeout"], 5.0)
+        self.assertFalse(captured["local_llm_fallback"])
+
+    def test_quiet_suppresses_progress_without_polluting_json_stdout(self) -> None:
+        original_run_search = cli_module.run_search
+
+        def fake_run_search(query: str, **kwargs):
+            if kwargs.get("progress"):
+                kwargs["progress"]("progress line")
+            return deep_search.SearchRun(query=query, depth=kwargs["depth"], packs=kwargs["packs"], locale="ko-KR", query_variants=[query])
+
+        try:
+            cli_module.run_search = fake_run_search  # type: ignore[assignment]
+            stdout = StringIO()
+            stderr = StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(cli_module.main(["OpenAI Codex", "--json"]), 0)
+            self.assertIn("progress line", stderr.getvalue())
+            self.assertTrue(stdout.getvalue().lstrip().startswith("{"))
+
+            stdout = StringIO()
+            stderr = StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(cli_module.main(["OpenAI Codex", "--json", "--quiet"]), 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue(stdout.getvalue().lstrip().startswith("{"))
+        finally:
+            cli_module.run_search = original_run_search  # type: ignore[assignment]
 
     def test_local_llm_unavailable_falls_back_to_heuristic_planner(self) -> None:
         original_generate_json = research_module.generate_json
 
-        def fake_generate_json(prompt: str, *, mode: str = "auto", model: str | None = None, timeout: float = 45.0):
+        def fake_generate_json(
+            prompt: str,
+            *,
+            mode: str = "auto",
+            model: str | None = None,
+            timeout: float | None = None,
+            fallback_models: bool = True,
+        ):
             return None, {"mode": mode, "requested_model": model, "available": False, "fallback": True, "error": "offline"}
 
         def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
@@ -439,7 +660,14 @@ class DeepSearchTests(unittest.TestCase):
     def test_local_llm_required_failure_raises_clear_error(self) -> None:
         original_generate_json = research_module.generate_json
 
-        def fake_generate_json(prompt: str, *, mode: str = "auto", model: str | None = None, timeout: float = 45.0):
+        def fake_generate_json(
+            prompt: str,
+            *,
+            mode: str = "auto",
+            model: str | None = None,
+            timeout: float | None = None,
+            fallback_models: bool = True,
+        ):
             return None, {"mode": mode, "requested_model": model, "available": False, "fallback": True, "error": "offline"}
 
         def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:

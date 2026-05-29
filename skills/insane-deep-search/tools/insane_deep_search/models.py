@@ -100,7 +100,10 @@ class SearchRun:
     verify_mode: str = "basic"
     local_llm_mode: str = "off"
     local_llm_model: str = ""
+    local_llm_timeout: float | None = None
     cache: str = "off"
+    max_workers: int = 1
+    time_budget: float | None = None
     results: list[SearchResult] = dataclasses.field(default_factory=list)
     errors: list[SearchError] = dataclasses.field(default_factory=list)
     fetched_urls: list[FetchCheck] = dataclasses.field(default_factory=list)
@@ -134,7 +137,10 @@ class SearchRun:
             "verify_mode": self.verify_mode,
             "local_llm_mode": self.local_llm_mode,
             "local_llm_model": self.local_llm_model,
+            "local_llm_timeout": self.local_llm_timeout,
             "cache": self.cache,
+            "max_workers": self.max_workers,
+            "time_budget": self.time_budget,
             "results": [result.to_dict() for result in self.results],
             "errors": [error.to_dict() for error in self.errors],
             "fetched_urls": [fetch.to_dict() for fetch in self.fetched_urls],

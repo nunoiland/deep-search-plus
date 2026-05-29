@@ -47,6 +47,7 @@ def format_report(run: SearchRun) -> str:
     lines.append(f"- Research mode: `{'on' if run.research else 'off'}`")
     lines.append(f"- Verify mode: `{run.verify_mode}`")
     lines.append(f"- Local LLM: `{run.local_llm_mode}` `{run.local_llm_model}`")
+    lines.append(f"- Runtime budget: `{run.time_budget}` seconds, workers `{run.max_workers}`")
     lines.append(f"- Results: `{len(run.results)}`")
     lines.append(f"- Result groups: `{len(run.result_groups)}`")
     lines.append(f"- Source errors: `{len(run.errors)}`")

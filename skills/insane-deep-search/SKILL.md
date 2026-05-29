@@ -27,11 +27,12 @@ Run from this skill directory:
 python3 tools/deep_search.py "query" --json --report
 ```
 
-The default CLI profile is intentionally heavy: iterative research is on, local Ollama planning is auto-enabled with `gemma4:latest`, top URLs are verified, and public evidence links are recursively followed within bounded limits. Use `--quick` when the user wants a fast low-cost pass.
+The default CLI profile is speed-bounded: iterative research is on, local Ollama planning is auto-enabled with a short `gemma4:latest` attempt, source calls run in parallel, and public evidence links are followed within a roughly one-minute budget. Use `--quick` for a fast low-cost pass and `--ultra` for the older maximum-depth profile that can take several minutes.
 
 Useful options:
 
 - `--quick`
+- `--ultra`
 - `--depth quick|balanced|deep`
 - `--pack news,community,tech,research`
 - `--limit N`
@@ -45,6 +46,10 @@ Useful options:
 - `--max-total-fetches N`
 - `--local-llm auto|off|required`
 - `--local-llm-model MODEL`
+- `--local-llm-timeout N`
+- `--max-workers N`
+- `--time-budget N`
+- `--quiet`
 - `--cache on|off`
 - `--include-offsite`
 - `--same-site-only`
@@ -66,7 +71,7 @@ This mode must stay within public evidence boundaries. It does not bypass login,
 
 ## Local LLM
 
-The tool may use local Ollama for planning and claim extraction. It must not call hosted LLM APIs. Default model order is `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, then deterministic heuristics. If the user wants no local model use, pass `--local-llm off`. If they explicitly require the local model, pass `--local-llm required`. Use `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` to adjust the per-model timeout.
+The tool may use local Ollama for planning and claim extraction. It must not call hosted LLM APIs. The default CLI tries `gemma4:latest` once with a short timeout, then falls back to deterministic heuristics. `--ultra` uses the broader model order: `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, then heuristics. If the user wants no local model use, pass `--local-llm off`. If they explicitly require the local model, pass `--local-llm required`. Use `--local-llm-timeout` or `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` to adjust the per-model timeout.
 
 ## Routing
 

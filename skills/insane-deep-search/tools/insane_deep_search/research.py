@@ -160,11 +160,15 @@ def local_llm_follow_up_plan(
     *,
     local_llm_mode: str,
     local_llm_model: str,
+    local_llm_timeout: float | None = None,
+    local_llm_fallback: bool = True,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     parsed, status = generate_json(
         llm_prompt(query, results, coverage, breadth),
         mode=local_llm_mode,
         model=local_llm_model,
+        timeout=local_llm_timeout,
+        fallback_models=local_llm_fallback,
     )
     if not parsed:
         return [], [], status
@@ -199,6 +203,8 @@ def build_follow_up_plan(
     coverage: dict[str, dict[str, Any]] | None = None,
     local_llm_mode: str = "off",
     local_llm_model: str = "",
+    local_llm_timeout: float | None = None,
+    local_llm_fallback: bool = True,
 ) -> tuple[list[dict[str, str]], dict[str, Any], list[dict[str, Any]]]:
     coverage = coverage or source_coverage(results)
     llm_queries: list[dict[str, str]] = []
@@ -212,6 +218,8 @@ def build_follow_up_plan(
             coverage,
             local_llm_mode=local_llm_mode,
             local_llm_model=local_llm_model,
+            local_llm_timeout=local_llm_timeout,
+            local_llm_fallback=local_llm_fallback,
         )
 
     heuristic = heuristic_follow_up_queries(query, results, breadth, coverage)

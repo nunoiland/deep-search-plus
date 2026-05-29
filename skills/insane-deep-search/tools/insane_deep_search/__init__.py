@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .cli import build_parser, main, positive_int
+from .cli import build_parser, main, non_negative_float, positive_int
 from .claims import build_claim_ledger, claim_key, classify_claim, normalize_claim, result_claim
 from .config import (
     DEFAULT_LOCAL_LLM_MODEL,

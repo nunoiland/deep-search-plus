@@ -32,21 +32,24 @@ cd ~/.codex/skills/deep-search-plus
 python3 tools/deep_search.py "openai agents sdk" --json --report
 ```
 
-Default behavior:
+Default behavior targets a useful result in about a minute:
 
-- `--depth deep`
+- `--depth balanced`
 - `--pack news,community,tech,research`
 - `--limit 8` per source
-- `--research` on, `--research-depth 4`, `--research-breadth 8`
-- `--verify-mode auto`
-- `--fetch-top 10`
-- `--dig-pages 16`, `--crawl-depth 3`, `--max-page-links 24`, `--max-total-fetches 60`
-- `--local-llm auto --local-llm-model gemma4:latest`
+- `--research` on, `--research-depth 2`, `--research-breadth 4`
+- `--verify-mode basic`
+- `--fetch-top 3`
+- `--dig-pages 4`, `--crawl-depth 1`, `--max-page-links 24`, `--max-total-fetches 12`
+- `--local-llm auto --local-llm-model gemma4:latest --local-llm-timeout 5`
+- `--max-workers 8`, `--time-budget 60`
 - `--cache on`
 - `--locale ko-KR`
+- progress logs print to stderr unless `--quiet` is used
 - report and JSON can be printed together
 
 Use `--quick` for a fast profile that disables iterative research, local LLM planning, URL fetching, and recursive crawling.
+Use `--ultra` for the older maximum-depth profile: deeper follow-up rounds, more URL verification, rendered fallback, and recursive crawl depth 3. It can take several minutes.
 
 Recursive discovery follows public evidence trails from top pages, including relevant public offsite links by default:
 
@@ -64,7 +67,7 @@ python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news comm
 
 Use `--verify-mode auto` to try optional rendered verification only when the basic fetch is blocked or weak. `crawl4ai` is optional; the CLI still works when it is not installed.
 
-Local LLM planning uses Ollama only and never calls hosted LLM APIs. The preferred model is `gemma4:latest`, falling back to `qwen2.5:7b`, `llama3.2:3b`, then deterministic heuristics. Use `--local-llm off` to disable local model planning or `--local-llm required` to fail clearly when Ollama is unavailable. `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` controls the per-model timeout.
+Local LLM planning uses Ollama only and never calls hosted LLM APIs. The default CLI tries `gemma4:latest` once with a short timeout, then falls back to deterministic heuristics. `--ultra` restores the broader fallback order: `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, then heuristics. Use `--local-llm off` to disable local model planning or `--local-llm required` to fail clearly when Ollama is unavailable. `--local-llm-timeout` or `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` controls the per-model timeout.
 
 ## Structure
 

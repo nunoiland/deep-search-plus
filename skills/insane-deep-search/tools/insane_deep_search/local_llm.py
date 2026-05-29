@@ -89,6 +89,7 @@ def generate_json(
     mode: str = "auto",
     model: str | None = None,
     timeout: float | None = None,
+    fallback_models: bool = True,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Return parsed JSON and local LLM status metadata."""
     status: dict[str, Any] = {
@@ -97,6 +98,7 @@ def generate_json(
         "requested_model": configured_model(model),
         "used_model": "",
         "attempted_models": [],
+        "fallback_models": fallback_models,
         "available": False,
         "fallback": False,
         "error": "",
@@ -110,7 +112,8 @@ def generate_json(
 
     last_error = ""
     effective_timeout = local_llm_timeout() if timeout is None else timeout
-    for candidate in model_candidates(model):
+    candidates = model_candidates(model) if fallback_models else [configured_model(model)]
+    for candidate in candidates:
         status["attempted_models"].append(candidate)
         try:
             parsed = extract_json_object(ollama_generate(prompt, model=candidate, timeout=effective_timeout))
