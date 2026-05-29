@@ -49,6 +49,14 @@ python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --
 
 Detective mode extracts public links from fetched pages, filters them by query relevance, records the parent page, and verifies the strongest discovered URLs. Use `--same-site-only` when you want conservative same-domain discovery. It does not bypass login, paywalls, captcha, access controls, or blocked systems.
 
+Research mode runs bounded follow-up searches, groups duplicates, and adds source quality signals:
+
+```bash
+python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news community" --research --research-depth 2 --research-breadth 4 --json --report
+```
+
+Use `--verify-mode auto` to try optional rendered verification only when the basic fetch is blocked or weak. `crawl4ai` is optional; the CLI still works when it is not installed.
+
 ## Structure
 
 The CLI entrypoint stays stable at `tools/deep_search.py`, while the implementation lives in `tools/insane_deep_search/`:
@@ -61,10 +69,10 @@ The CLI entrypoint stays stable at `tools/deep_search.py`, while the implementat
 
 | Pack | Sources |
 | --- | --- |
-| `news` | Google News RSS in Korean and English |
+| `news` | Google News RSS in Korean and English, GDELT DOC 2.0 |
 | `community` | Reddit public JSON search, Hacker News Algolia, Lobste.rs, dev.to, V2EX |
-| `tech` | GitHub repositories, GitHub issues, Stack Overflow, npm, PyPI exact lookup, Hugging Face models and datasets |
-| `research` | arXiv, Crossref, Open Library, Wikipedia OpenSearch |
+| `tech` | GitHub repositories and issues with lightweight enrichment, Stack Overflow, npm, PyPI exact lookup, Hugging Face models and datasets |
+| `research` | arXiv, Crossref, OpenAlex, Semantic Scholar, Open Library, Wikipedia OpenSearch |
 
 Korean community sites without stable public APIs are intentionally not hardcoded in v1. Use broader web search or a future pluggable metasearch source for `site:`-based discovery.
 
@@ -77,8 +85,11 @@ Each result includes:
 - `query_variant`
 - `score`, `rank_score`, `evidence_level`
 - `fetched`, `fetch_verdict`, `metadata`
+- `quality_score`, `quality_reasons`, `risk_flags` inside `metadata`
+- `group_id`, `duplicate_count`, and `supporting_sources` when equivalent evidence is grouped
 - `links` on fetched URL checks when detective mode is enabled
 - `discovered_urls` for public links followed from top pages
+- `research_rounds` and `result_groups` when research mode is enabled
 - discovery metadata such as `parent_url`, `discovery_score`, `discovery_reason`, and `discovery_depth`
 - `errors`
 
@@ -88,8 +99,10 @@ The Markdown report is ordered as:
 2. Source findings
 3. Community reaction
 4. Technical and research evidence
-5. Fetch verification
-6. Gaps and cautions
+5. Source quality and duplicate groups
+6. Follow-up search rounds
+7. Fetch verification
+8. Gaps and cautions
 
 ## Examples
 
@@ -98,6 +111,7 @@ python3 tools/deep_search.py "Hyundai tariffs hybrid sales" --pack news,communit
 python3 tools/deep_search.py "openai agents sdk" --pack tech,research --depth quick --limit 2 --fetch-top 0 --report
 python3 tools/deep_search.py "Kia HEV EV margin buyback" --pack news,community,research --depth balanced
 python3 tools/deep_search.py "AI capex power grid" --detective --same-site-only --dig-pages 4 --report
+python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --research --verify-mode auto --fetch-top 3 --json --report
 ```
 
 ## Codex Triggers

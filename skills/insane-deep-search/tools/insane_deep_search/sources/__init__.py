@@ -10,6 +10,7 @@ from . import adapters
 ADAPTERS = {
     "google_news_ko": adapters.google_news_ko,
     "google_news_en": adapters.google_news_en,
+    "gdelt_news": adapters.gdelt_news,
     "reddit": adapters.reddit_search,
     "hacker_news": adapters.hacker_news_search,
     "lobsters": adapters.lobsters_search,
@@ -24,6 +25,8 @@ ADAPTERS = {
     "huggingface_datasets": adapters.huggingface_datasets,
     "arxiv": adapters.arxiv_search,
     "crossref": adapters.crossref_search,
+    "openalex": adapters.openalex_search,
+    "semantic_scholar": adapters.semantic_scholar_search,
     "openlibrary": adapters.openlibrary_search,
     "wikipedia": adapters.wikipedia_search,
 }

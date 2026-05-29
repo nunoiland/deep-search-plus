@@ -49,6 +49,14 @@ python3 tools/deep_search.py "AI capex power grid" --depth deep --fetch-top 5 --
 
 탐정 모드는 상위 원문 페이지에서 공개 링크를 추출하고, 쿼리 관련도 기준으로 강한 후보를 다시 확인합니다. 각 발견 URL에는 부모 페이지가 기록됩니다. 같은 사이트 안에서만 보수적으로 확인하려면 `--same-site-only`를 사용합니다. 로그인, 유료벽, 캡차, 접근통제, 차단된 시스템은 우회하지 않습니다.
 
+리서치 모드는 제한된 후속 검색을 반복하고, 중복 근거를 묶고, 소스 품질 신호를 추가합니다.
+
+```bash
+python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news community" --research --research-depth 2 --research-breadth 4 --json --report
+```
+
+`--verify-mode auto`를 쓰면 기본 fetch가 차단되거나 약할 때만 선택적으로 렌더링 검증을 시도합니다. `crawl4ai`는 선택 의존성이며 설치되어 있지 않아도 CLI는 동작합니다.
+
 ## 구조
 
 CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools/insane_deep_search/` 패키지에 있습니다.
@@ -61,10 +69,10 @@ CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools
 
 | Pack | Sources |
 | --- | --- |
-| `news` | Google News RSS 한국어/영어 |
+| `news` | Google News RSS 한국어/영어, GDELT DOC 2.0 |
 | `community` | Reddit 공개 JSON 검색, Hacker News Algolia, Lobste.rs, dev.to, V2EX |
-| `tech` | GitHub 저장소, GitHub 이슈, Stack Overflow, npm, PyPI exact lookup, Hugging Face 모델/데이터셋 |
-| `research` | arXiv, Crossref, Open Library, Wikipedia OpenSearch |
+| `tech` | GitHub 저장소/이슈와 경량 enrichment, Stack Overflow, npm, PyPI exact lookup, Hugging Face 모델/데이터셋 |
+| `research` | arXiv, Crossref, OpenAlex, Semantic Scholar, Open Library, Wikipedia OpenSearch |
 
 안정적인 공개 API가 없는 한국 커뮤니티는 v1에서 사이트별 스크래퍼로 하드코딩하지 않습니다. 추후 `site:` 후보 발견이나 메타검색 플러그인으로 분리하는 방향이 더 안전합니다.
 
@@ -77,8 +85,11 @@ CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools
 - `query_variant`
 - `score`, `rank_score`, `evidence_level`
 - `fetched`, `fetch_verdict`, `metadata`
+- `metadata` 안의 `quality_score`, `quality_reasons`, `risk_flags`
+- 같은 근거가 묶인 경우 `group_id`, `duplicate_count`, `supporting_sources`
 - 탐정 모드에서 원문 확인 URL의 `links`
 - 상위 페이지에서 따라간 `discovered_urls`
+- 리서치 모드의 `research_rounds`, `result_groups`
 - 발견 링크 metadata: `parent_url`, `discovery_score`, `discovery_reason`, `discovery_depth`
 - `errors`
 
@@ -88,8 +99,10 @@ Markdown 리포트 순서:
 2. 소스별 발견
 3. 커뮤니티 반응
 4. 기술/논문 근거
-5. 원문 확인 결과
-6. 빈틈/주의점
+5. 소스 품질/중복 묶음
+6. 후속 검색 라운드
+7. 원문 확인 결과
+8. 빈틈/주의점
 
 ## 자연어 트리거
 

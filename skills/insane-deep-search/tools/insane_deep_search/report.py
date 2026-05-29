@@ -20,6 +20,12 @@ def result_line(item: SearchResult) -> str:
     if item.published:
         parts.append(f"({item.published[:10]})")
     parts.append(f"- score {item.rank_score:.1f}, evidence {item.evidence_level}")
+    quality = item.metadata.get("quality_score")
+    if quality is not None:
+        parts.append(f", quality {quality}")
+    duplicates = item.metadata.get("duplicate_count")
+    if isinstance(duplicates, int) and duplicates > 1:
+        parts.append(f", sources {duplicates}")
     if item.fetch_verdict:
         parts.append(f", fetch {item.fetch_verdict}")
     parts.append(f"\n  {compact_url(item.url)}")
@@ -37,7 +43,10 @@ def format_report(run: SearchRun) -> str:
     lines.append(f"- Packs: `{', '.join(run.packs)}`")
     lines.append(f"- Detective mode: `{'on' if run.detective else 'off'}`")
     lines.append(f"- Offsite discovery: `{'on' if run.include_offsite else 'off'}`")
+    lines.append(f"- Research mode: `{'on' if run.research else 'off'}`")
+    lines.append(f"- Verify mode: `{run.verify_mode}`")
     lines.append(f"- Results: `{len(run.results)}`")
+    lines.append(f"- Result groups: `{len(run.result_groups)}`")
     lines.append(f"- Source errors: `{len(run.errors)}`")
     lines.append("")
 
@@ -57,7 +66,7 @@ def format_report(run: SearchRun) -> str:
         lines.append("")
 
     lines.append("## 커뮤니티 반응")
-    community = [item for item in run.results if item.source_type == "community"]
+    community = [item for item in run.results if item.source_type == "community" or item.source == "stackoverflow"]
     if community:
         for item in community[:8]:
             comments = item.metadata.get("comments")
@@ -71,6 +80,7 @@ def format_report(run: SearchRun) -> str:
             lines.append(f"- [{item.source}] {item.title}{suffix}\n  {compact_url(item.url)}")
     else:
         lines.append("- 커뮤니티 소스에서 의미 있는 결과가 없거나 해당 소스가 실패했습니다.")
+    lines.append("- 커뮤니티/질문답변 소스는 사실 확정이 아니라 반응과 단서로 해석해야 합니다.")
     lines.append("")
 
     lines.append("## 기술/논문 근거")
@@ -80,6 +90,37 @@ def format_report(run: SearchRun) -> str:
             lines.append(result_line(item))
     else:
         lines.append("- 기술/논문/레지스트리 소스에서 의미 있는 결과가 없습니다.")
+    lines.append("")
+
+    lines.append("## 소스 품질/중복 묶음")
+    if run.result_groups:
+        for group in run.result_groups[:10]:
+            duplicate_count = int(group.get("duplicate_count") or 0)
+            if duplicate_count <= 1 and len(run.result_groups) > 10:
+                continue
+            sources = ", ".join(group.get("supporting_sources", []))
+            lines.append(
+                f"- {group.get('representative_title') or '(untitled)'} - duplicates {duplicate_count}, sources `{sources}`\n  {compact_url(str(group.get('representative_url') or ''))}"
+            )
+    else:
+        lines.append("- 중복 그룹 정보가 없습니다.")
+    lines.append("")
+
+    lines.append("## 후속 검색 라운드")
+    if run.research:
+        for round_info in run.research_rounds:
+            round_id = round_info.get("round")
+            result_count = round_info.get("result_count")
+            lines.append(f"- Round {round_id}: results {result_count}")
+            queries = round_info.get("queries", [])
+            if queries:
+                for query in queries[:8]:
+                    if isinstance(query, dict):
+                        lines.append(f"  - `{query.get('query')}` ({query.get('reason')})")
+                    else:
+                        lines.append(f"  - `{query}`")
+    else:
+        lines.append("- 꺼짐. 반복 검색은 `--research`로 켭니다.")
     lines.append("")
 
     lines.append("## 원문 확인 결과")

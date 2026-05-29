@@ -92,10 +92,16 @@ class SearchRun:
     detective: bool = False
     dig_pages: int = 0
     include_offsite: bool = True
+    research: bool = False
+    research_depth: int = 0
+    research_breadth: int = 0
+    verify_mode: str = "basic"
     results: list[SearchResult] = dataclasses.field(default_factory=list)
     errors: list[SearchError] = dataclasses.field(default_factory=list)
     fetched_urls: list[FetchCheck] = dataclasses.field(default_factory=list)
     discovered_urls: list[str] = dataclasses.field(default_factory=list)
+    research_rounds: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    result_groups: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     elapsed_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,10 +114,16 @@ class SearchRun:
             "detective": self.detective,
             "dig_pages": self.dig_pages,
             "include_offsite": self.include_offsite,
+            "research": self.research,
+            "research_depth": self.research_depth,
+            "research_breadth": self.research_breadth,
+            "verify_mode": self.verify_mode,
             "results": [result.to_dict() for result in self.results],
             "errors": [error.to_dict() for error in self.errors],
             "fetched_urls": [fetch.to_dict() for fetch in self.fetched_urls],
             "discovered_urls": self.discovered_urls,
+            "research_rounds": self.research_rounds,
+            "result_groups": self.result_groups,
             "top_evidence_urls": [result.url for result in self.results[:10]],
             "elapsed_ms": self.elapsed_ms,
         }

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import base64
+import os
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -52,6 +54,38 @@ def google_news_en(variant: str, context: SearchContext) -> list[SearchResult]:
         {"q": variant, "hl": "en-US", "gl": "US", "ceid": "US:en"},
     )
     return parse_rss(read_text(url, context.timeout), "google_news_en", variant, context.limit)
+
+
+def gdelt_news(variant: str, context: SearchContext) -> list[SearchResult]:
+    data = read_json(
+        build_url(
+            endpoint_for("gdelt_news"),
+            {"query": variant, "mode": "artlist", "format": "json", "maxrecords": min(50, context.limit), "sort": "datedesc"},
+        ),
+        context.timeout,
+    )
+    items = []
+    for article in data.get("articles", []) if isinstance(data, dict) else []:
+        items.append(
+            result(
+                source="gdelt_news",
+                pack="news",
+                source_type="news",
+                query_variant=variant,
+                title=article.get("title", ""),
+                url=article.get("url", ""),
+                snippet=article.get("snippet") or article.get("domain", ""),
+                published=article.get("seendate"),
+                score=4.0,
+                metadata={
+                    "domain": article.get("domain"),
+                    "language": article.get("language"),
+                    "source_country": article.get("sourcecountry"),
+                    "tone": article.get("tone"),
+                },
+            )
+        )
+    return items
 
 
 def reddit_search(variant: str, context: SearchContext) -> list[SearchResult]:
@@ -208,13 +242,67 @@ def v2ex_search(variant: str, context: SearchContext) -> list[SearchResult]:
     return items
 
 
+def github_headers(extra_accept: str | None = None) -> dict[str, str]:
+    headers = {"Accept": extra_accept or "application/vnd.github+json"}
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def enrich_github_repo(repo: dict, context: SearchContext) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    api_url = repo.get("url") or ""
+    if not api_url:
+        return metadata
+
+    try:
+        readme = read_json(api_url + "/readme", context.timeout, github_headers())
+        content = readme.get("content", "")
+        if content:
+            decoded = base64.b64decode(content.encode("ascii"), validate=False).decode("utf-8", errors="replace")
+            metadata["readme_excerpt"] = decoded[:700]
+        metadata["readme_url"] = readme.get("html_url")
+    except Exception:
+        pass
+
+    try:
+        license_info = read_json(api_url + "/license", context.timeout, github_headers())
+        metadata["license"] = (license_info.get("license") or {}).get("spdx_id") or (license_info.get("license") or {}).get("key")
+    except Exception:
+        license_value = repo.get("license")
+        if isinstance(license_value, dict):
+            metadata["license"] = license_value.get("spdx_id") or license_value.get("key")
+
+    try:
+        release = read_json(api_url + "/releases/latest", context.timeout, github_headers())
+        metadata["latest_release"] = release.get("tag_name") or release.get("name")
+        metadata["latest_release_published"] = release.get("published_at")
+    except Exception:
+        pass
+
+    return metadata
+
+
 def github_repositories(variant: str, context: SearchContext) -> list[SearchResult]:
     data = read_json(
         build_url(endpoint_for("github_repositories"), {"q": variant, "sort": "updated", "order": "desc", "per_page": context.limit}),
         context.timeout,
+        github_headers(),
     )
     items = []
-    for repo in data.get("items", []):
+    for index, repo in enumerate(data.get("items", [])):
+        license_value = repo.get("license")
+        metadata = {
+            "stars": int(repo.get("stargazers_count") or 0),
+            "forks": int(repo.get("forks_count") or 0),
+            "language": repo.get("language"),
+            "repository": repo.get("full_name"),
+            "archived": bool(repo.get("archived")),
+            "license": (license_value or {}).get("spdx_id") if isinstance(license_value, dict) else None,
+        }
+        if index < min(context.limit, 3):
+            metadata.update(enrich_github_repo(repo, context))
         items.append(
             result(
                 source="github_repositories",
@@ -226,11 +314,7 @@ def github_repositories(variant: str, context: SearchContext) -> list[SearchResu
                 snippet=repo.get("description", ""),
                 published=repo.get("updated_at"),
                 score=4.0,
-                metadata={
-                    "stars": int(repo.get("stargazers_count") or 0),
-                    "forks": int(repo.get("forks_count") or 0),
-                    "language": repo.get("language"),
-                },
+                metadata=metadata,
             )
         )
     return items
@@ -240,9 +324,16 @@ def github_issues(variant: str, context: SearchContext) -> list[SearchResult]:
     data = read_json(
         build_url(endpoint_for("github_issues"), {"q": variant, "sort": "updated", "order": "desc", "per_page": context.limit}),
         context.timeout,
+        github_headers("application/vnd.github.text-match+json"),
     )
     items = []
     for issue in data.get("items", []):
+        repository_url = issue.get("repository_url", "")
+        repository = repository_url.rsplit("/", 2)[-2:]
+        text_matches = issue.get("text_matches") or []
+        text_fragment = ""
+        if text_matches and isinstance(text_matches, list):
+            text_fragment = text_matches[0].get("fragment", "")
         items.append(
             result(
                 source="github_issues",
@@ -251,13 +342,14 @@ def github_issues(variant: str, context: SearchContext) -> list[SearchResult]:
                 query_variant=variant,
                 title=issue.get("title", ""),
                 url=issue.get("html_url", ""),
-                snippet=issue.get("body", "") or "",
+                snippet=text_fragment or issue.get("body", "") or "",
                 published=issue.get("updated_at"),
                 score=3.5,
                 metadata={
                     "comments": int(issue.get("comments") or 0),
                     "state": issue.get("state"),
                     "is_pull_request": "pull_request" in issue,
+                    "repository": "/".join(repository) if len(repository) == 2 else "",
                 },
             )
         )
@@ -469,6 +561,95 @@ def crossref_search(variant: str, context: SearchContext) -> list[SearchResult]:
                     "doi": work.get("DOI"),
                     "citations": int(work.get("is-referenced-by-count") or 0),
                     "publisher": work.get("publisher"),
+                },
+            )
+        )
+    return items
+
+
+def openalex_search(variant: str, context: SearchContext) -> list[SearchResult]:
+    data = read_json(
+        build_url(endpoint_for("openalex"), {"search": variant, "per_page": context.limit}),
+        context.timeout,
+    )
+    items = []
+    for work in data.get("results", []) if isinstance(data, dict) else []:
+        primary = work.get("primary_location") or {}
+        source = primary.get("source") or {}
+        open_access = work.get("open_access") or {}
+        url = primary.get("landing_page_url") or work.get("doi") or work.get("id", "")
+        year = work.get("publication_year")
+        items.append(
+            result(
+                source="openalex",
+                pack="research",
+                source_type="research",
+                query_variant=variant,
+                title=work.get("title", ""),
+                url=url,
+                snippet=source.get("display_name", ""),
+                published=f"{year}-01-01" if year else None,
+                score=4.0,
+                metadata={
+                    "doi": work.get("doi"),
+                    "citations": int(work.get("cited_by_count") or 0),
+                    "venue": source.get("display_name"),
+                    "open_access": bool(open_access.get("is_oa")),
+                    "openalex_id": work.get("id"),
+                    "year": year,
+                },
+            )
+        )
+    return items
+
+
+def semantic_scholar_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    token = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    if token:
+        headers["x-api-key"] = token
+    return headers
+
+
+def semantic_scholar_search(variant: str, context: SearchContext) -> list[SearchResult]:
+    definition = source_definition("semantic_scholar")
+    data = read_json(
+        build_url(
+            endpoint_for("semantic_scholar"),
+            {
+                "query": variant,
+                "limit": context.limit,
+                "fields": "title,url,abstract,year,publicationDate,citationCount,externalIds,venue,isOpenAccess,authors",
+            },
+        ),
+        context.timeout,
+        semantic_scholar_headers(),
+    )
+    items = []
+    for paper in data.get("data", []) if isinstance(data, dict) else []:
+        external = paper.get("externalIds") or {}
+        paper_id = paper.get("paperId", "")
+        authors = paper.get("authors") or []
+        items.append(
+            result(
+                source="semantic_scholar",
+                pack="research",
+                source_type="research",
+                query_variant=variant,
+                title=paper.get("title", ""),
+                url=paper.get("url") or f"{definition.base_url}/{paper_id}",
+                snippet=paper.get("abstract", "") or paper.get("venue", ""),
+                published=paper.get("publicationDate") or (f"{paper.get('year')}-01-01" if paper.get("year") else None),
+                score=4.0,
+                metadata={
+                    "paper_id": paper_id,
+                    "doi": external.get("DOI"),
+                    "arxiv_id": external.get("ArXiv"),
+                    "citations": int(paper.get("citationCount") or 0),
+                    "venue": paper.get("venue"),
+                    "open_access": bool(paper.get("isOpenAccess")),
+                    "year": paper.get("year"),
+                    "authors": [author.get("name") for author in authors[:5] if isinstance(author, dict) and author.get("name")],
                 },
             )
         )

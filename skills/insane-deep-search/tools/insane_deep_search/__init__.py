@@ -14,14 +14,18 @@ from .config import (
     TRACKING_PARAMS,
     USER_AGENT,
 )
+from .dedupe import arxiv_key, github_repo_key, group_results, identity_key, normalize_doi, normalized_title
 from .discovery import build_discovery_results, discovered_link_analysis, discovered_link_score
 from .html_tools import LinkParser, MetadataParser, extract_links, extract_metadata
 from .http import detect_blocked_signals, fetch_bytes, fetch_verdict, http_headers, read_json, read_text, urllib_context, verify_url
 from .models import FetchCheck, SearchContext, SearchError, SearchResult, SearchRun, SourceSpec
+from .quality import apply_quality_score
 from .ranking import query_match_score, rank_result, recency_score
+from .render import should_render_fallback, verify_rendered_url
 from .report import format_report, group_by, result_line
+from .research import follow_up_queries
 from .results import result
-from .runner import dedupe_and_rank, parse_packs, run_search, variants_for_depth
+from .runner import dedupe_and_rank, dedupe_rank_and_group, parse_packs, run_search, variants_for_depth, verify_for_mode
 from .source_catalog import (
     SOURCE_BY_NAME,
     SOURCE_DEFINITIONS,
@@ -37,6 +41,7 @@ from .sources.adapters import (
     crossref_search,
     devto_search,
     first_tag_candidate,
+    gdelt_news,
     github_issues,
     github_repositories,
     google_news_en,
@@ -46,11 +51,13 @@ from .sources.adapters import (
     huggingface_models,
     lobsters_search,
     npm_search,
+    openalex_search,
     openlibrary_search,
     package_candidates,
     parse_rss,
     pypi_lookup,
     reddit_search,
+    semantic_scholar_search,
     stackoverflow_search,
     v2ex_search,
     wikipedia_search,

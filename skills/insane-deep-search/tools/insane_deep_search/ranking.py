@@ -46,6 +46,7 @@ def rank_result(result: SearchResult, query: str, trust_weight: float | None = N
             engagement += math.log1p(raw)
     fetch_bonus = FETCH_VERDICT_BONUS.get(result.fetch_verdict or "", 0.0)
     trust = trust_weight if trust_weight is not None else float(result.metadata.get("trust_weight", RANKING_POLICY.default_trust_weight))
+    quality_bonus = min(5.0, float(result.metadata.get("quality_score") or 0.0) * 0.5)
     result.rank_score = (
         result.score
         + trust
@@ -53,6 +54,7 @@ def rank_result(result: SearchResult, query: str, trust_weight: float | None = N
         + recency_score(result.published)
         + min(RANKING_POLICY.max_engagement_score, engagement)
         + fetch_bonus
+        + quality_bonus
     )
     if result.source_type in {"research", "registry", "developer"} and result.rank_score >= RANKING_POLICY.strong_research_threshold:
         result.evidence_level = "strong"

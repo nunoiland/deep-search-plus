@@ -33,6 +33,13 @@ SOURCE_DEFINITIONS: tuple[SourceDefinition, ...] = (
         ("https://news.google.com/rss/search",),
     ),
     SourceDefinition(
+        "gdelt_news",
+        "news",
+        "news",
+        3.5,
+        ("https://api.gdeltproject.org/api/v2/doc/doc",),
+    ),
+    SourceDefinition(
         "reddit",
         "community",
         "community",
@@ -135,6 +142,21 @@ SOURCE_DEFINITIONS: tuple[SourceDefinition, ...] = (
         "research",
         4.0,
         ("https://api.crossref.org/works",),
+    ),
+    SourceDefinition(
+        "openalex",
+        "research",
+        "research",
+        4.0,
+        ("https://api.openalex.org/works",),
+    ),
+    SourceDefinition(
+        "semantic_scholar",
+        "research",
+        "research",
+        4.0,
+        ("https://api.semanticscholar.org/graph/v1/paper/search",),
+        "https://www.semanticscholar.org/paper",
     ),
     SourceDefinition(
         "openlibrary",

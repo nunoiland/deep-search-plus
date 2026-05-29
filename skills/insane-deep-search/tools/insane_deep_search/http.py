@@ -37,15 +37,16 @@ def urllib_context() -> ssl.SSLContext:
     return context
 
 
-def fetch_bytes(url: str, timeout: float = 12.0) -> tuple[bytes, int | None, str, str, int, str]:
+def fetch_bytes(url: str, timeout: float = 12.0, headers: dict[str, str] | None = None) -> tuple[bytes, int | None, str, str, int, str]:
     start = time.monotonic()
+    request_headers = http_headers(headers)
     try:
         try:
             from curl_cffi import requests as curl_requests  # type: ignore
 
             response = curl_requests.get(
                 url,
-                headers=http_headers(),
+                headers=request_headers,
                 timeout=timeout,
                 impersonate="chrome",
                 allow_redirects=True,
@@ -62,7 +63,7 @@ def fetch_bytes(url: str, timeout: float = 12.0) -> tuple[bytes, int | None, str
         except ImportError:
             pass
 
-        request = urllib.request.Request(url, headers=http_headers())
+        request = urllib.request.Request(url, headers=request_headers)
         with urllib.request.urlopen(request, timeout=timeout, context=urllib_context()) as response:
             body = response.read()
             elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -83,8 +84,8 @@ def fetch_bytes(url: str, timeout: float = 12.0) -> tuple[bytes, int | None, str
         return b"", None, "", url, elapsed_ms, str(exc)
 
 
-def read_text(url: str, timeout: float = 12.0) -> str:
-    body, status, _content_type, _final_url, _elapsed_ms, error = fetch_bytes(url, timeout)
+def read_text(url: str, timeout: float = 12.0, headers: dict[str, str] | None = None) -> str:
+    body, status, _content_type, _final_url, _elapsed_ms, error = fetch_bytes(url, timeout, headers)
     if error and not body:
         raise RuntimeError(error)
     if status and status >= 400:
@@ -92,8 +93,8 @@ def read_text(url: str, timeout: float = 12.0) -> str:
     return body.decode("utf-8", errors="replace")
 
 
-def read_json(url: str, timeout: float = 12.0) -> Any:
-    return json.loads(read_text(url, timeout))
+def read_json(url: str, timeout: float = 12.0, headers: dict[str, str] | None = None) -> Any:
+    return json.loads(read_text(url, timeout, headers))
 
 
 def detect_blocked_signals(text: str, status: int | None) -> list[str]:

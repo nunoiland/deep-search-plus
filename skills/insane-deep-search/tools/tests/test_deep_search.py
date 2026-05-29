@@ -69,6 +69,54 @@ class DeepSearchTests(unittest.TestCase):
         results = deep_search.dedupe_and_rank([first, second], "openai update")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].source, "two")
+        self.assertEqual(results[0].metadata["duplicate_count"], 2)
+        self.assertIn("one", results[0].metadata["supporting_sources"])
+
+    def test_identity_dedupe_uses_doi_arxiv_github_and_title_domain(self) -> None:
+        doi = deep_search.result(
+            source="crossref",
+            pack="research",
+            source_type="research",
+            query_variant="x",
+            title="Paper",
+            url="https://publisher.example/paper",
+            metadata={"doi": "https://doi.org/10.123/ABC"},
+        )
+        self.assertEqual(deep_search.identity_key(doi), "doi:10.123/abc")
+
+        arxiv = deep_search.result(
+            source="arxiv",
+            pack="research",
+            source_type="research",
+            query_variant="x",
+            title="Paper",
+            url="https://arxiv.org/abs/2401.12345v2",
+        )
+        self.assertEqual(deep_search.identity_key(arxiv), "arxiv:2401.12345")
+
+        github = deep_search.result(
+            source="github_issues",
+            pack="tech",
+            source_type="developer",
+            query_variant="x",
+            title="Issue",
+            url="https://github.com/OpenAI/codex/issues/1",
+        )
+        self.assertEqual(deep_search.identity_key(github), "github:openai/codex")
+
+    def test_quality_score_flags_source_specific_risk(self) -> None:
+        community = deep_search.result(
+            source="reddit",
+            pack="community",
+            source_type="community",
+            query_variant="x",
+            title="Rumor",
+            url="https://reddit.com/r/test/comments/1",
+            metadata={"comments": 10, "points": 5},
+        )
+        deep_search.apply_quality_score(community)
+        self.assertGreater(community.metadata["quality_score"], 0)
+        self.assertIn("community_opinion_not_confirmed_fact", community.metadata["risk_flags"])
 
     def test_report_contains_expected_sections(self) -> None:
         item = deep_search.result(
@@ -120,6 +168,39 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(len(run.errors), 1)
         self.assertEqual(run.errors[0].source, "bad")
 
+    def test_research_mode_generates_bounded_novel_followups(self) -> None:
+        calls = []
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            calls.append(variant)
+            return [
+                deep_search.result(
+                    source="ok",
+                    pack="news",
+                    source_type="news",
+                    query_variant=variant,
+                    title=f"OpenAI Codex evidence {variant}",
+                    url=f"https://example.com/{len(calls)}",
+                    score=3,
+                )
+            ]
+
+        sources = [deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com/ok",), ok_adapter)]
+        run = deep_search.run_search(
+            "OpenAI Codex",
+            packs=["news"],
+            depth="quick",
+            limit=1,
+            fetch_top=0,
+            research=True,
+            research_depth=2,
+            research_breadth=2,
+            sources=sources,
+        )
+        self.assertEqual(len(run.research_rounds), 2)
+        self.assertLessEqual(len(run.research_rounds[1]["queries"]), 2)
+        self.assertEqual(len(calls), len(set(calls)))
+
     def test_fetch_verdict_strong_ok(self) -> None:
         original_fetch = http_module.fetch_bytes
 
@@ -135,6 +216,26 @@ class DeepSearchTests(unittest.TestCase):
             self.assertEqual(check.description, "Desc")
         finally:
             http_module.fetch_bytes = original_fetch  # type: ignore[assignment]
+
+    def test_verify_mode_auto_uses_render_fallback_for_weak_basic_result(self) -> None:
+        original_verify = runner_module.verify_url
+        original_render = runner_module.verify_rendered_url
+
+        def fake_verify(url: str, timeout: float = 12.0, link_limit: int = 0):
+            return deep_search.FetchCheck(url=url, final_url=url, status=200, body_size=20, verdict="weak_ok")
+
+        def fake_render(url: str, timeout: float = 12.0, link_limit: int = 0):
+            return deep_search.FetchCheck(url=url, final_url=url, status=200, body_size=2000, verdict="strong_ok")
+
+        try:
+            runner_module.verify_url = fake_verify  # type: ignore[assignment]
+            runner_module.verify_rendered_url = fake_render  # type: ignore[assignment]
+            check = deep_search.verify_for_mode("https://example.com", timeout=12, link_limit=0, verify_mode="auto")
+            self.assertEqual(check.verdict, "strong_ok")
+            self.assertEqual(check.metadata["basic_verdict"], "weak_ok")
+        finally:
+            runner_module.verify_url = original_verify  # type: ignore[assignment]
+            runner_module.verify_rendered_url = original_render  # type: ignore[assignment]
 
     def test_google_news_rss_parsing(self) -> None:
         rss = """<?xml version="1.0" encoding="UTF-8" ?>

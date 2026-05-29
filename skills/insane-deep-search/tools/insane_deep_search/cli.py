@@ -31,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--same-site-only", action="store_true", help="Limit detective mode to links on the same site")
     parser.add_argument("--locale", default="ko-KR")
     parser.add_argument("--timeout", type=float, default=12.0)
+    parser.add_argument("--research", action="store_true", help="Run iterative follow-up searches and evidence grouping")
+    parser.add_argument("--research-depth", type=positive_int, default=2, help="Total research rounds including the initial round")
+    parser.add_argument("--research-breadth", type=positive_int, default=4, help="Follow-up queries per research round")
+    parser.add_argument("--verify-mode", choices=["basic", "auto", "rendered"], default="basic", help="URL verification backend")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     parser.add_argument("--report", action="store_true", help="Print Markdown report")
     return parser
@@ -56,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
         include_offsite=not args.same_site_only,
         locale=args.locale,
         timeout=args.timeout,
+        research=args.research,
+        research_depth=args.research_depth,
+        research_breadth=args.research_breadth,
+        verify_mode=args.verify_mode,
     )
 
     print_report = args.report or not args.json
