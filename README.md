@@ -1,6 +1,17 @@
 # Deep Search plus
 
-Deep Search plus is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report. The default CLI profile now runs a heavy local deep-search flow with iterative planning, recursive public-link crawling, claim grouping, and optional local Ollama planning.
+## 한국어 핵심 요약
+
+Deep Search Plus는 Codex 안에서 뉴스, 커뮤니티, GitHub, 패키지, 논문 근거를 한 번에 따라가는 공개근거 딥서치 스킬입니다.
+
+- 검색 결과를 많이 나열하는 데서 끝나지 않고, 같은 근거를 묶고 소스 품질과 검증 상태를 함께 보여줍니다.
+- 기본 실행은 약 1분 안쪽의 쓸 만한 결과를 목표로 하며, 더 깊은 탐색은 `--ultra`로 켭니다.
+- Ollama 로컬 모델이 있으면 후속 검색 계획에 활용하고, 없어도 휴리스틱으로 안전하게 동작합니다.
+- 자세한 한국어 설명은 아래 [한국어 소개](#한국어-소개) 섹션을 보세요.
+
+## English Overview
+
+Deep Search plus is a Codex-native public evidence research skill. It searches across news, communities, developer platforms, package registries, and research indexes, then returns both a ranked JSON payload and a readable Markdown report. The default CLI profile targets a fast deep-search flow with iterative planning, public-link crawling, claim grouping, and optional local Ollama planning.
 
 It is built for questions such as:
 
@@ -18,7 +29,7 @@ Clone the repository and copy the skill into Codex:
 ```bash
 git clone https://github.com/nunoiland/deep-search-plus.git
 mkdir -p ~/.codex/skills
-cp -R insane-deep-search/skills/insane-deep-search ~/.codex/skills/deep-search-plus
+cp -R deep-search-plus/skills/insane-deep-search ~/.codex/skills/deep-search-plus
 ```
 
 Restart Codex after installing the skill.
