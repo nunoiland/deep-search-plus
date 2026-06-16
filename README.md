@@ -141,3 +141,68 @@ Use natural Korean or English requests inside Codex:
 - "탐정 모드로 상위 페이지 안의 관련 링크까지 따라가줘"
 
 Single URL reading should stay with ordinary URL-fetching workflows. Broad topic discovery should use Insane Deep Search.
+
+## 한국어 소개
+
+### 검색 결과를 더 많이 모으는 도구가 아니라, 근거를 놓치지 않는 딥서치 엔진
+
+Deep Search Plus는 Codex 안에서 공개 근거를 넓고 깊게 따라가는 리서치 스킬입니다. 한 번의 질문으로 뉴스, 커뮤니티, GitHub, 패키지 레지스트리, 논문/인용 데이터베이스를 함께 훑고, 중복된 근거를 묶고, 소스 품질과 검증 상태까지 리포트로 정리합니다.
+
+일반 검색이 "상위 링크 몇 개"를 보여준다면, Deep Search Plus는 "어떤 출처들이 같은 주장을 뒷받침하는지", "커뮤니티 반응은 사실 근거와 어떻게 다른지", "아직 빈틈이 어디에 남아 있는지"까지 보여주는 것을 목표로 합니다.
+
+### 이런 상황에 좋습니다
+
+- 특정 기업, 종목, 제품, 기술 이슈를 뉴스와 커뮤니티 반응까지 함께 보고 싶을 때
+- GitHub 이슈, 릴리스, 패키지, 논문 근거를 한 번에 모아야 할 때
+- 영어권 자료와 한국어 자료를 같이 훑고 싶은데 매번 검색어를 바꾸기 귀찮을 때
+- 단순 요약보다 URL, 출처, 신뢰도, 중복 여부, 원문 확인 상태가 필요할 때
+- Codex 대화방 안에서 바로 근거 중심 리서치를 반복하고 싶을 때
+
+### 핵심 차별점
+
+- **멀티소스 검색**: 뉴스, Reddit, Hacker News, Lobste.rs, dev.to, V2EX, GitHub, Stack Overflow, npm, PyPI, Hugging Face, arXiv, Crossref, OpenAlex, Semantic Scholar, Wikipedia를 함께 탐색합니다.
+- **근거 그룹화**: 같은 이슈를 다루는 URL을 버리지 않고 `group_id`, `duplicate_count`, `supporting_sources`로 묶어 보여줍니다.
+- **소스 품질 점수**: GitHub stars/release activity, 논문 DOI/citation/year, 뉴스 발행일/원출처성, 커뮤니티 반응량 같은 신호를 품질 점수와 risk flag로 표시합니다.
+- **후속 검색 라운드**: 부족한 출처, 약한 주장, 커뮤니티 단독 반응을 기준으로 추가 검색어를 만들고 제한된 라운드 안에서 다시 확인합니다.
+- **로컬 LLM planner**: Ollama의 `gemma4:latest`가 있으면 후속 검색 계획에 활용하고, 없거나 실패하면 휴리스틱으로 안전하게 fallback합니다.
+- **재귀 공개 링크 탐색**: 상위 페이지 안의 관련 공개 링크를 따라가며 parent chain과 발견 이유를 기록합니다.
+- **빠른 기본값과 ultra 모드**: 기본 실행은 약 1분 안쪽의 쓸 만한 결과를 목표로 하고, 더 깊은 탐색은 `--ultra`로 명시적으로 켭니다.
+
+### 빠른 시작
+
+```bash
+git clone https://github.com/nunoiland/deep-search-plus.git
+mkdir -p ~/.codex/skills
+cp -R deep-search-plus/skills/insane-deep-search ~/.codex/skills/deep-search-plus
+```
+
+Codex를 재시작한 뒤, 스킬 폴더에서 바로 실행합니다.
+
+```bash
+cd ~/.codex/skills/deep-search-plus
+python3 tools/deep_search.py "OpenAI Codex 최신 이슈 논문 뉴스 커뮤니티 반응" --json --report
+```
+
+빠르게 확인하려면:
+
+```bash
+python3 tools/deep_search.py "KCC 주식 이슈 뉴스 커뮤니티 반응" --quick --report
+```
+
+깊게 파고들려면:
+
+```bash
+python3 tools/deep_search.py "AI capex power grid 논문 뉴스 GitHub 커뮤니티" --ultra --json --report
+```
+
+### Codex에서 이렇게 요청하세요
+
+- "딥검색으로 해외 뉴스, 논문, GitHub, 커뮤니티 반응까지 같이 찾아줘"
+- "이 이슈를 공개근거 기준으로 중복 묶고 소스 품질까지 평가해줘"
+- "커뮤니티 반응과 검증된 사실을 분리해서 정리해줘"
+- "상위 원문 안의 관련 링크까지 따라가서 근거를 더 찾아줘"
+- "빠르게 보고 싶으니 quick으로, 깊게 보고 싶으면 ultra로 돌려줘"
+
+### 지켜야 할 선
+
+Deep Search Plus는 공개된 자료를 더 잘 찾고 정리하는 도구입니다. 로그인 전용 콘텐츠, 유료벽, 캡차, 접근통제, 비공개 데이터는 우회하지 않습니다. 리포트의 claim ledger와 quality score는 의사결정을 돕는 보조 신호이며, 법률/투자/의료 같은 고위험 판단은 원문 확인과 전문가 검토가 필요합니다.
