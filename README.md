@@ -80,6 +80,15 @@ Use `--verify-mode auto` to try optional rendered verification only when the bas
 
 Local LLM planning uses Ollama only and never calls hosted LLM APIs. The default CLI tries `gemma4:latest` once with a short timeout, then falls back to deterministic heuristics. `--ultra` restores the broader fallback order: `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, then heuristics. Use `--local-llm off` to disable local model planning or `--local-llm required` to fail clearly when Ollama is unavailable. `--local-llm-timeout` or `DEEP_SEARCH_LOCAL_LLM_TIMEOUT` controls the per-model timeout.
 
+Agentic evidence workflow options:
+
+- `--research-contract basic|strict|off` adds a goal/scope/done-evidence contract to the run.
+- `--goal`, `--scope`, and `--done-evidence` make the research objective explicit.
+- `--evidence-gate strict|balanced|loose` controls which claim statuses can appear in the core summary.
+- `--checkpoint path.json` writes a resumable handoff with seen queries, URLs, claims, and evidence gates.
+- `--resume path.json` skips duplicate queries and URL fetches from a prior checkpoint.
+- `--html-report board.html` writes a self-contained evidence board with claim cards, source cards, duplicate groups, and follow-up queries.
+
 ## Structure
 
 The CLI entrypoint stays stable at `tools/deep_search.py`, while the implementation lives in `tools/insane_deep_search/`:
@@ -115,19 +124,20 @@ Each result includes:
 - `research_rounds` and `result_groups` when research mode is enabled
 - discovery metadata such as `parent_url`, `parent_chain`, `discovery_score`, `discovery_reason`, and `discovery_depth`
 - `coverage`, `claims`, `planner_steps`, `crawl_traces`, `local_llm`, `cache_stats`, and `retry_stats`
+- `research_contract`, `evidence_gates`, `source_ladder_trace`, `run_checkpoint`, `html_report`, and `decision_readiness`
 - `errors`
 
 The Markdown report is ordered as:
 
-1. Key summary
-2. Search coverage
+1. Research contract and evidence-gated key summary
+2. Evidence gate and search coverage
 3. Verified, weak, and community-only claims
 4. Source findings
 5. Community reaction
 6. Technical and research evidence
 7. Source quality and duplicate groups
 8. Follow-up search rounds and planner trace
-9. Fetch verification, crawl trace, local runtime
+9. Fetch verification, source access ladder, crawl trace, local runtime
 10. Gaps and cautions
 
 ## Examples
@@ -139,6 +149,7 @@ python3 tools/deep_search.py "Kia HEV EV margin buyback" --pack news,community,r
 python3 tools/deep_search.py "AI capex power grid" --same-site-only --dig-pages 4 --crawl-depth 2 --report
 python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --local-llm auto --json --report
 python3 tools/deep_search.py "OpenAI Codex GitHub papers community" --quick --json --report
+python3 tools/deep_search.py "OpenAI Codex latest issues" --goal "decide what changed this week" --html-report evidence.html --checkpoint run.json --json --report
 ```
 
 ## Codex Triggers

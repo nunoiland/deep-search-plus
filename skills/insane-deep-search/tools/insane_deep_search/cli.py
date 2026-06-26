@@ -7,8 +7,10 @@ import json
 import sys
 
 from .config import DEFAULT_LOCAL_LLM_MODEL, DISCOVERY_POLICY
+from .html_report import write_html_report
 from .report import format_report
 from .runner import parse_packs, run_search
+from .workflow import load_checkpoint, write_checkpoint
 
 
 def positive_int(value: str) -> int:
@@ -55,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--time-budget", type=non_negative_float, default=60.0, help="Overall runtime budget in seconds")
     parser.add_argument("--quiet", action="store_true", help="Disable progress logs on stderr")
     parser.add_argument("--cache", choices=["on", "off"], default="on", help="Use local HTTP response cache")
+    parser.add_argument("--research-contract", choices=["basic", "strict", "off"], default="basic", help="Research contract mode")
+    parser.add_argument("--goal", default=None, help="Decision goal for this research run")
+    parser.add_argument("--scope", default=None, help="In/out scope for this research run")
+    parser.add_argument("--done-evidence", default=None, help="Evidence needed before the run is considered done")
+    parser.add_argument("--checkpoint", default=None, help="Write resumable handoff checkpoint JSON to this path")
+    parser.add_argument("--resume", default=None, help="Resume from a prior checkpoint JSON and skip duplicate queries/URLs")
+    parser.add_argument("--html-report", default=None, help="Write a self-contained HTML evidence board to this path")
+    parser.add_argument("--evidence-gate", choices=["strict", "balanced", "loose"], default="balanced", help="Evidence gate policy for core summary strength")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     parser.add_argument("--report", action="store_true", help="Print Markdown report")
     return parser
@@ -97,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         args.local_llm_timeout = 0.0
 
     progress = None if args.quiet else (lambda message: print(message, file=sys.stderr, flush=True))
+    resume_state = load_checkpoint(args.resume) if args.resume else None
 
     run = run_search(
         args.query,
@@ -124,7 +135,23 @@ def main(argv: list[str] | None = None) -> int:
         max_workers=args.max_workers,
         time_budget=args.time_budget,
         progress=progress,
+        research_contract=args.research_contract,
+        goal=args.goal,
+        scope=args.scope,
+        done_evidence=args.done_evidence,
+        evidence_gate=args.evidence_gate,
+        resume_state=resume_state,
     )
+
+    if args.html_report:
+        path = write_html_report(args.html_report, run)
+        run.html_report = {"path": path, "format": "self-contained-html", "saved": True}
+
+    if args.checkpoint:
+        run.run_checkpoint = dict(run.run_checkpoint)
+        run.run_checkpoint["saved"] = True
+        path = write_checkpoint(args.checkpoint, run.run_checkpoint)
+        run.run_checkpoint["path"] = path
 
     print_report = args.report or not args.json
     if print_report:

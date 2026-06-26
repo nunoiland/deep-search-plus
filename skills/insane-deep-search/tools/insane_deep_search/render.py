@@ -1,4 +1,9 @@
-"""Optional rendered-page verification using crawl4ai when installed."""
+"""Optional rendered-page verification using crawl4ai when installed.
+
+This is a public-page fallback for weak, blocked, or empty basic fetches. It is
+not an access-control bypass and must not attempt login, paywall, captcha, or
+private-content workarounds.
+"""
 
 from __future__ import annotations
 

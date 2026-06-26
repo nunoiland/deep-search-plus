@@ -69,6 +69,15 @@ python3 tools/deep_search.py "OpenAI Codex latest GitHub issues papers news comm
 
 로컬 LLM planner는 Ollama만 사용하며 외부 LLM API를 호출하지 않습니다. 기본 CLI는 `gemma4:latest`를 짧게 한 번 시도한 뒤 휴리스틱으로 fallback합니다. `--ultra`는 `gemma4:latest`, `qwen2.5:7b`, `llama3.2:3b`, 휴리스틱 순서의 넓은 fallback을 복원합니다. 로컬 모델을 끄려면 `--local-llm off`, 반드시 쓰려면 `--local-llm required`를 사용합니다. 모델별 timeout은 `--local-llm-timeout` 또는 `DEEP_SEARCH_LOCAL_LLM_TIMEOUT`으로 조정할 수 있습니다.
 
+Agentic Evidence Workbench 옵션:
+
+- `--research-contract basic|strict|off`: 검색 목표, 범위, 완료 기준을 run에 기록합니다.
+- `--goal`, `--scope`, `--done-evidence`: 이번 검색의 의사결정 목표와 완료 기준을 명시합니다.
+- `--evidence-gate strict|balanced|loose`: 핵심 요약에 올릴 수 있는 claim 상태를 제한합니다.
+- `--checkpoint path.json`: 다음 검색에서 이어받을 수 있는 handoff JSON을 저장합니다.
+- `--resume path.json`: 이전 checkpoint의 중복 query/URL fetch를 건너뜁니다.
+- `--html-report board.html`: claim card, source card, 중복 그룹, 후속 검색어를 담은 self-contained HTML evidence board를 생성합니다.
+
 ## 구조
 
 CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools/insane_deep_search/` 패키지에 있습니다.
@@ -104,19 +113,20 @@ CLI 진입점은 `tools/deep_search.py`로 유지하고, 실제 구현은 `tools
 - 리서치 모드의 `research_rounds`, `result_groups`
 - 발견 링크 metadata: `parent_url`, `parent_chain`, `discovery_score`, `discovery_reason`, `discovery_depth`
 - `coverage`, `claims`, `planner_steps`, `crawl_traces`, `local_llm`, `cache_stats`, `retry_stats`
+- `research_contract`, `evidence_gates`, `source_ladder_trace`, `run_checkpoint`, `html_report`, `decision_readiness`
 - `errors`
 
 Markdown 리포트 순서:
 
-1. 핵심 요약
-2. 검색 커버리지
+1. Research Contract와 evidence-gated 핵심 요약
+2. Evidence Gate와 검색 커버리지
 3. 검증된 주장 / 약한 주장 / 커뮤니티 단독 반응
 4. 소스별 발견
 5. 커뮤니티 반응
 6. 기술/논문 근거
 7. 소스 품질/중복 묶음
 8. 후속 검색 라운드와 planner trace
-9. 원문 확인, crawl trace, local runtime
+9. 원문 확인, source access ladder, crawl trace, local runtime
 10. 빈틈/주의점
 
 ## 자연어 트리거

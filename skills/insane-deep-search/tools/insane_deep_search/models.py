@@ -117,6 +117,12 @@ class SearchRun:
     local_llm: dict[str, Any] = dataclasses.field(default_factory=dict)
     cache_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
     retry_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
+    research_contract: dict[str, Any] = dataclasses.field(default_factory=dict)
+    evidence_gates: dict[str, Any] = dataclasses.field(default_factory=dict)
+    source_ladder_trace: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    run_checkpoint: dict[str, Any] = dataclasses.field(default_factory=dict)
+    html_report: dict[str, Any] = dataclasses.field(default_factory=dict)
+    decision_readiness: str = ""
     elapsed_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -154,6 +160,12 @@ class SearchRun:
             "local_llm": self.local_llm,
             "cache_stats": self.cache_stats,
             "retry_stats": self.retry_stats,
+            "research_contract": self.research_contract,
+            "evidence_gates": self.evidence_gates,
+            "source_ladder_trace": self.source_ladder_trace,
+            "run_checkpoint": self.run_checkpoint,
+            "html_report": self.html_report,
+            "decision_readiness": self.decision_readiness,
             "top_evidence_urls": [result.url for result in self.results[:10]],
             "elapsed_ms": self.elapsed_ms,
         }

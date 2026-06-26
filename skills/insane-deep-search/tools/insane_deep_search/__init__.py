@@ -20,6 +20,8 @@ from .config import (
 )
 from .dedupe import arxiv_key, github_repo_key, group_results, identity_key, normalize_doi, normalized_title
 from .discovery import build_discovery_results, discovered_link_analysis, discovered_link_score
+from .evidence_gate import allowed_statuses, evaluate_evidence_gate
+from .html_report import build_html_report, write_html_report
 from .html_tools import LinkParser, MetadataParser, extract_links, extract_metadata
 from .http import detect_blocked_signals, fetch_bytes, fetch_verdict, http_headers, read_json, read_text, reset_transport_stats, set_transport_options, transport_stats, urllib_context, verify_url
 from .local_llm import configured_model, extract_json_object, generate_json, local_llm_timeout, model_candidates, ollama_generate, ollama_host
@@ -40,6 +42,7 @@ from .source_catalog import (
     source_definition,
     validate_source_definitions,
 )
+from .source_ladder import classify_failure, error_ladder_trace, fetch_ladder_trace
 from .sources import SOURCES
 from .sources.adapters import (
     arxiv_search,
@@ -67,6 +70,7 @@ from .sources.adapters import (
     v2ex_search,
     wikipedia_search,
 )
+from .workflow import build_checkpoint_payload, build_research_contract, checkpoint_seen_queries, checkpoint_seen_urls, load_checkpoint, write_checkpoint
 from .text import (
     build_url,
     canonicalize_url,

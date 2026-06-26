@@ -48,17 +48,57 @@ def format_report(run: SearchRun) -> str:
     lines.append(f"- Verify mode: `{run.verify_mode}`")
     lines.append(f"- Local LLM: `{run.local_llm_mode}` `{run.local_llm_model}`")
     lines.append(f"- Runtime budget: `{run.time_budget}` seconds, workers `{run.max_workers}`")
+    lines.append(f"- Research contract: `{run.research_contract.get('mode', 'off') if run.research_contract else 'off'}`")
+    lines.append(f"- Evidence gate: `{run.evidence_gates.get('mode', 'n/a') if run.evidence_gates else 'n/a'}`")
+    lines.append(f"- Decision readiness: `{run.decision_readiness or 'unknown'}`")
     lines.append(f"- Results: `{len(run.results)}`")
     lines.append(f"- Result groups: `{len(run.result_groups)}`")
     lines.append(f"- Source errors: `{len(run.errors)}`")
     lines.append("")
 
+    if run.research_contract and run.research_contract.get("enabled"):
+        lines.append("## Research Contract")
+        lines.append(f"- Goal: {run.research_contract.get('goal')}")
+        lines.append(f"- Scope: {run.research_contract.get('scope')}")
+        lines.append(f"- Done evidence: {run.research_contract.get('done_evidence')}")
+        lines.append("")
+
     lines.append("## 핵심 요약")
-    if run.results:
+    summary_claims = run.evidence_gates.get("summary_claims", []) if run.evidence_gates else []
+    if summary_claims:
+        for claim in summary_claims[:5]:
+            sources = ", ".join(claim.get("supporting_sources", []))
+            lines.append(
+                f"- {claim.get('status')} confidence {claim.get('confidence')}: {claim.get('claim')}\n"
+                f"  sources `{sources}`"
+            )
+        if run.results:
+            lines.append("")
+            lines.append("주요 근거:")
+            for item in run.results[:3]:
+                lines.append(result_line(item))
+    elif run.evidence_gates and run.claims:
+        lines.append("- evidence gate를 통과한 핵심 주장이 없습니다. 아래 claim ledger와 소스별 발견에서 약한 근거를 확인하세요.")
+    elif run.results:
         for item in run.results[:5]:
             lines.append(result_line(item))
     else:
         lines.append("- 검색 결과가 없습니다. 쿼리를 더 넓게 바꾸거나 소스팩을 추가해 보세요.")
+    lines.append("")
+
+    lines.append("## Evidence Gate")
+    if run.evidence_gates:
+        counts = run.evidence_gates.get("status_counts", {})
+        lines.append(f"- readiness: `{run.decision_readiness or 'unknown'}`")
+        lines.append(f"- allowed summary statuses: `{', '.join(run.evidence_gates.get('allowed_summary_statuses', []))}`")
+        lines.append(f"- claim status counts: `{counts}`")
+        blocked = run.evidence_gates.get("blocked_claims", [])
+        if blocked:
+            lines.append("- 핵심 요약에서 제외된 주장:")
+            for claim in blocked[:6]:
+                lines.append(f"  - {claim.get('status')}: {claim.get('claim')}")
+    else:
+        lines.append("- evidence gate 정보가 없습니다.")
     lines.append("")
 
     lines.append("## 검색 커버리지")
@@ -176,6 +216,22 @@ def format_report(run: SearchRun) -> str:
         lines.append("- `--fetch-top 0`이거나 확인할 상위 URL이 없습니다.")
     lines.append("")
 
+    lines.append("## Source Access Ladder")
+    if run.source_ladder_trace:
+        for trace in run.source_ladder_trace[:20]:
+            phase = trace.get("phase")
+            if phase == "source":
+                lines.append(
+                    f"- source {trace.get('pack')}/{trace.get('source')} `{trace.get('failure_type')}` for `{trace.get('query_variant')}`"
+                )
+            else:
+                lines.append(
+                    f"- fetch `{trace.get('selected_verdict')}` `{trace.get('failure_type')}` {compact_url(str(trace.get('url') or ''))}"
+                )
+    else:
+        lines.append("- source ladder trace가 없습니다.")
+    lines.append("")
+
     lines.append("## 탐정 모드 발견 링크")
     if run.discovered_urls:
         discovery_items = [item for item in run.results if item.source == "page_discovery"]
@@ -215,6 +271,10 @@ def format_report(run: SearchRun) -> str:
             lines.append(f"- local_llm error: {str(run.local_llm.get('error'))[:180]}")
     lines.append(f"- cache: `{run.cache}` {run.cache_stats}")
     lines.append(f"- retry: {run.retry_stats}")
+    if run.html_report:
+        lines.append(f"- html_report: {run.html_report}")
+    if run.run_checkpoint.get("path"):
+        lines.append(f"- checkpoint: {run.run_checkpoint.get('path')}")
     lines.append("")
 
     lines.append("## 빈틈/주의점")

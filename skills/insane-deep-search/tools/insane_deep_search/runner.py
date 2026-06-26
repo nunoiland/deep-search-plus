@@ -10,14 +10,17 @@ from .claims import build_claim_ledger
 from .config import DEFAULT_LOCAL_LLM_MODEL, DEFAULT_PACKS, DISCOVERY_POLICY
 from .dedupe import group_results
 from .discovery import build_discovery_results
+from .evidence_gate import evaluate_evidence_gate
 from .http import reset_transport_stats, set_transport_options, transport_stats, verify_url
 from .models import SearchContext, SearchError, SearchResult, SearchRun, SourceSpec
 from .quality import apply_quality_score
 from .ranking import rank_result
 from .render import should_render_fallback, verify_rendered_url
 from .research import build_follow_up_plan, follow_up_queries, source_coverage
+from .source_ladder import error_ladder_trace, fetch_ladder_trace
 from .sources import SOURCES
 from .text import canonicalize_url, generate_query_variants, unique
+from .workflow import build_checkpoint_payload, build_research_contract, checkpoint_contract, checkpoint_seen_queries, checkpoint_seen_urls
 
 ProgressFn = Callable[[str], None] | None
 
@@ -107,17 +110,26 @@ def dedupe_rank_and_group(results: list[SearchResult], query: str) -> tuple[list
 
 
 def verify_for_mode(url: str, *, timeout: float, link_limit: int, verify_mode: str):
+    check, _trace = verify_for_mode_with_trace(url, timeout=timeout, link_limit=link_limit, verify_mode=verify_mode)
+    return check
+
+
+def verify_for_mode_with_trace(url: str, *, timeout: float, link_limit: int, verify_mode: str):
     if verify_mode == "rendered":
-        return verify_rendered_url(url, timeout=timeout, link_limit=link_limit)
+        rendered = verify_rendered_url(url, timeout=timeout, link_limit=link_limit)
+        return rendered, fetch_ladder_trace(url=url, verify_mode=verify_mode, rendered=rendered, selected=rendered)
     check = verify_url(url, timeout=timeout, link_limit=link_limit)
+    rendered = None
+    selected = check
     if verify_mode == "auto" and should_render_fallback(check):
         rendered = verify_rendered_url(url, timeout=timeout, link_limit=link_limit)
         if rendered.verdict != "fail" or rendered.body_size > check.body_size:
             rendered.metadata["basic_verdict"] = check.verdict
             rendered.metadata["basic_status"] = check.status
-            return rendered
+            selected = rendered
+            return selected, fetch_ladder_trace(url=url, verify_mode=verify_mode, basic=check, rendered=rendered, selected=selected)
         check.metadata["render_error"] = rendered.error
-    return check
+    return selected, fetch_ladder_trace(url=url, verify_mode=verify_mode, basic=check, rendered=rendered, selected=selected)
 
 
 def collect_from_sources(
@@ -160,6 +172,7 @@ def collect_from_sources(
             collected.extend(results)
             if error:
                 run.errors.append(error)
+                run.source_ladder_trace.append(error_ladder_trace(error))
         if started is not None:
             emit_progress(progress, started, f"sources done: {len(collected)} results, {len(tasks)} calls")
         return collected
@@ -173,6 +186,7 @@ def collect_from_sources(
             collected.extend(results)
             if error:
                 run.errors.append(error)
+                run.source_ladder_trace.append(error_ladder_trace(error))
     if started is not None:
         emit_progress(progress, started, f"sources done: {len(collected)} results, {completed} calls, workers {workers}")
     return collected
@@ -203,10 +217,11 @@ def fetch_result(
     discovery_depth: int,
     append_discovered: bool = False,
 ) -> None:
-    check = verify_for_mode(item.url, timeout=timeout, link_limit=link_limit, verify_mode=verify_mode)
+    check, trace = verify_for_mode_with_trace(item.url, timeout=timeout, link_limit=link_limit, verify_mode=verify_mode)
     check.metadata.setdefault("discovery_depth", discovery_depth)
     check.metadata.setdefault("parent_chain", item.metadata.get("parent_chain", []))
     run.fetched_urls.append(check)
+    run.source_ladder_trace.append(trace)
     if append_discovered:
         run.discovered_urls.append(item.url)
     item.fetched = True
@@ -252,6 +267,12 @@ def run_search(
     max_workers: int = 1,
     time_budget: float | None = None,
     progress: ProgressFn = None,
+    research_contract: str = "basic",
+    goal: str | None = None,
+    scope: str | None = None,
+    done_evidence: str | None = None,
+    evidence_gate: str = "balanced",
+    resume_state: dict[str, object] | None = None,
 ) -> SearchRun:
     if verify_mode not in {"basic", "auto", "rendered"}:
         raise ValueError(f"Unknown verify_mode: {verify_mode}")
@@ -259,19 +280,36 @@ def run_search(
         raise ValueError(f"Unknown local_llm mode: {local_llm_mode}")
     if cache not in {"on", "off"}:
         raise ValueError(f"Unknown cache mode: {cache}")
+    if research_contract not in {"basic", "strict", "off"}:
+        raise ValueError(f"Unknown research_contract: {research_contract}")
+    if evidence_gate not in {"strict", "balanced", "loose"}:
+        raise ValueError(f"Unknown evidence_gate: {evidence_gate}")
     set_transport_options(cache_enabled=cache == "on", cache_dir=cache_dir)
     reset_transport_stats()
     started = time.monotonic()
     emit_progress(progress, started, f"start query={query!r} depth={depth} research={research}")
     selected_packs = packs or list(DEFAULT_PACKS)
     variants = variants_for_depth(query, depth)
+    resume_queries = checkpoint_seen_queries(resume_state)
+    resume_urls = checkpoint_seen_urls(resume_state)
+    active_variants = [variant for variant in variants if variant.lower() not in resume_queries]
+    if resume_state and len(active_variants) < len(variants):
+        emit_progress(progress, started, f"resume skipped {len(variants) - len(active_variants)} duplicate query variants")
+    previous_contract = checkpoint_contract(resume_state)
+    run_contract = build_research_contract(
+        query=query,
+        mode=research_contract,
+        goal=goal or str(previous_contract.get("goal") or "") or None,
+        scope=scope or str(previous_contract.get("scope") or "") or None,
+        done_evidence=done_evidence or str(previous_contract.get("done_evidence") or "") or None,
+    )
     context = SearchContext(original_query=query, depth=depth, locale=locale, limit=limit, timeout=timeout)
     run = SearchRun(
         query=query,
         depth=depth,
         packs=selected_packs,
         locale=locale,
-        query_variants=variants,
+        query_variants=active_variants if resume_state else variants,
         detective=detective,
         dig_pages=dig_pages,
         include_offsite=include_offsite,
@@ -287,6 +325,7 @@ def run_search(
         cache=cache,
         max_workers=max(1, max_workers),
         time_budget=time_budget,
+        research_contract=run_contract,
         local_llm={"provider": "ollama", "mode": local_llm_mode, "requested_model": local_llm_model, "available": False, "fallback": local_llm_mode == "off"},
     )
     run.local_llm["timeout"] = local_llm_timeout
@@ -294,10 +333,10 @@ def run_search(
     selected_sources = [source for source in (sources or SOURCES) if source.pack in selected_packs]
     suppressed_sources: set[str] = set()
     llm_claim_candidates: list[dict[str, object]] = []
-    emit_progress(progress, started, f"round 0 sources={len(selected_sources)} variants={len(variants)}")
+    emit_progress(progress, started, f"round 0 sources={len(selected_sources)} variants={len(active_variants if resume_state else variants)}")
     error_start = len(run.errors)
     collected = collect_from_sources(
-        variants=variants,
+        variants=active_variants if resume_state else variants,
         selected_sources=selected_sources,
         context=context,
         run=run,
@@ -309,13 +348,14 @@ def run_search(
     )
     update_suppressed_sources(run, error_start, suppressed_sources)
     if research:
-        run.research_rounds.append({"round": 0, "queries": variants, "result_count": len(collected), "reason": "initial variants"})
+        run.research_rounds.append({"round": 0, "queries": run.query_variants, "result_count": len(collected), "reason": "initial variants"})
 
     run.results, run.result_groups = dedupe_rank_and_group(collected, query)
     run.coverage = source_coverage(run.results)
 
     if research:
-        seen_queries = {variant.lower() for variant in variants}
+        seen_queries = set(resume_queries)
+        seen_queries.update(variant.lower() for variant in run.query_variants)
         total_rounds = max(1, research_depth)
         for round_index in range(1, total_rounds):
             if time_budget_exhausted(started, time_budget):
@@ -382,6 +422,18 @@ def run_search(
 
     effective_max_fetches = max_total_fetches if max_total_fetches > 0 else fetch_top + dig_pages
     for item in run.results[: max(0, min(fetch_top, effective_max_fetches))]:
+        if item.url in resume_urls or item.canonical_url in resume_urls:
+            run.source_ladder_trace.append(
+                {
+                    "phase": "fetch",
+                    "url": item.url,
+                    "verify_mode": verify_mode,
+                    "selected_verdict": "skipped",
+                    "failure_type": "ok",
+                    "steps": [{"step": "resume_checkpoint", "outcome": "skipped_duplicate_url"}],
+                }
+            )
+            continue
         if time_budget_exhausted(started, time_budget):
             emit_progress(progress, started, "top URL verification stopped: time budget exhausted")
             break
@@ -447,7 +499,9 @@ def run_search(
     run.results, run.result_groups = dedupe_rank_and_group(collected if collected else run.results, query)
     run.coverage = source_coverage(run.results)
     run.claims = build_claim_ledger(query, run.results, run.result_groups, llm_claim_candidates)
+    run.evidence_gates, run.decision_readiness = evaluate_evidence_gate(run, evidence_gate)
     run.cache_stats, run.retry_stats = transport_stats()
     run.elapsed_ms = int((time.monotonic() - started) * 1000)
+    run.run_checkpoint = build_checkpoint_payload(run)
     emit_progress(progress, started, f"done results={len(run.results)} errors={len(run.errors)} elapsed_ms={run.elapsed_ms}")
     return run

@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 TOOLS = Path(__file__).resolve().parents[1]
@@ -147,6 +149,66 @@ class DeepSearchTests(unittest.TestCase):
         self.assertIn("## 원문 확인 결과", report)
         self.assertIn("github_repositories", report)
 
+    def test_research_contract_defaults_and_evidence_gate_fields(self) -> None:
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            return [
+                deep_search.result(
+                    source="news",
+                    pack="news",
+                    source_type="news",
+                    query_variant=variant,
+                    title="OpenAI Codex launches research mode",
+                    url="https://example.com/openai-codex",
+                    score=5,
+                )
+            ]
+
+        run = deep_search.run_search(
+            "OpenAI Codex",
+            packs=["news"],
+            depth="quick",
+            limit=1,
+            fetch_top=0,
+            sources=[deep_search.SourceSpec("news", "news", "news", 4, ("https://example.com",), ok_adapter)],
+        )
+        data = run.to_dict()
+        self.assertEqual(run.research_contract["mode"], "basic")
+        self.assertIn("goal", run.research_contract)
+        self.assertEqual(run.evidence_gates["mode"], "balanced")
+        self.assertIn(run.decision_readiness, {"high", "medium", "low", "insufficient", "no_evidence"})
+        self.assertIn("research_contract", data)
+        self.assertIn("evidence_gates", data)
+        self.assertIn("decision_readiness", data)
+
+    def test_strict_evidence_gate_keeps_community_only_out_of_core_summary(self) -> None:
+        def community_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            return [
+                deep_search.result(
+                    source="reddit",
+                    pack="community",
+                    source_type="community",
+                    query_variant=variant,
+                    title="OpenAI Codex community rumor",
+                    url="https://example.com/reddit",
+                    score=3,
+                )
+            ]
+
+        run = deep_search.run_search(
+            "OpenAI Codex",
+            packs=["community"],
+            depth="quick",
+            limit=1,
+            fetch_top=0,
+            evidence_gate="strict",
+            sources=[deep_search.SourceSpec("reddit", "community", "community", 1, ("https://example.com",), community_adapter)],
+        )
+        self.assertEqual(run.claims[0]["status"], "community_only")
+        self.assertEqual(run.evidence_gates["summary_claims"], [])
+        report = deep_search.format_report(run)
+        core = report.split("## Evidence Gate", 1)[0]
+        self.assertNotIn("OpenAI Codex community rumor", core)
+
     def test_source_failure_keeps_partial_success(self) -> None:
         def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
             return [
@@ -172,6 +234,8 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(len(run.results), 1)
         self.assertEqual(len(run.errors), 1)
         self.assertEqual(run.errors[0].source, "bad")
+        self.assertEqual(run.source_ladder_trace[0]["phase"], "source")
+        self.assertEqual(run.source_ladder_trace[0]["failure_type"], "source_error")
 
     def test_research_mode_generates_bounded_novel_followups(self) -> None:
         calls = []
@@ -337,6 +401,52 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(calls, ["OpenAI Codex"])
         self.assertEqual(run.fetched_urls, [])
         self.assertEqual(run.research_rounds[-1]["reason"], "time budget exhausted")
+
+    def test_checkpoint_resume_skips_duplicate_query_and_url_fetch(self) -> None:
+        calls = []
+        original_verify = runner_module.verify_url
+        verify_calls = []
+
+        def ok_adapter(variant: str, context: deep_search.SearchContext) -> list[deep_search.SearchResult]:
+            calls.append(variant)
+            return [
+                deep_search.result(
+                    source="ok",
+                    pack="news",
+                    source_type="news",
+                    query_variant=variant,
+                    title="OpenAI Codex evidence",
+                    url="https://example.com/openai",
+                    score=5,
+                )
+            ]
+
+        def fake_verify(url: str, timeout: float = 12.0, link_limit: int = 0):
+            verify_calls.append(url)
+            return deep_search.FetchCheck(url=url, final_url=url, status=200, body_size=2000, verdict="strong_ok")
+
+        try:
+            runner_module.verify_url = fake_verify  # type: ignore[assignment]
+            run = deep_search.run_search(
+                "OpenAI Codex",
+                packs=["news"],
+                depth="balanced",
+                limit=1,
+                fetch_top=1,
+                research=False,
+                resume_state={
+                    "seen_queries": ["OpenAI Codex"],
+                    "seen_urls": ["https://example.com/openai"],
+                },
+                sources=[deep_search.SourceSpec("ok", "news", "news", 4, ("https://example.com",), ok_adapter)],
+            )
+        finally:
+            runner_module.verify_url = original_verify  # type: ignore[assignment]
+
+        self.assertNotIn("OpenAI Codex", calls)
+        self.assertTrue(calls)
+        self.assertEqual(verify_calls, [])
+        self.assertTrue(any(trace["steps"][0]["step"] == "resume_checkpoint" for trace in run.source_ladder_trace if trace.get("phase") == "fetch"))
 
     def test_fetch_verdict_strong_ok(self) -> None:
         original_fetch = http_module.fetch_bytes
@@ -512,6 +622,8 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(args.local_llm_timeout, 5.0)
         self.assertEqual(args.local_llm, "auto")
         self.assertEqual(args.local_llm_model, "gemma4:latest")
+        self.assertEqual(args.research_contract, "basic")
+        self.assertEqual(args.evidence_gate, "balanced")
 
     def test_ultra_profile_restores_heavy_deep_runtime(self) -> None:
         original_run_search = cli_module.run_search
@@ -584,6 +696,8 @@ class DeepSearchTests(unittest.TestCase):
         self.assertEqual(captured["time_budget"], 60.0)
         self.assertEqual(captured["local_llm_timeout"], 5.0)
         self.assertFalse(captured["local_llm_fallback"])
+        self.assertEqual(captured["research_contract"], "basic")
+        self.assertEqual(captured["evidence_gate"], "balanced")
 
     def test_quiet_suppresses_progress_without_polluting_json_stdout(self) -> None:
         original_run_search = cli_module.run_search
@@ -610,6 +724,85 @@ class DeepSearchTests(unittest.TestCase):
             self.assertTrue(stdout.getvalue().lstrip().startswith("{"))
         finally:
             cli_module.run_search = original_run_search  # type: ignore[assignment]
+
+    def test_cli_writes_html_report_and_checkpoint_without_polluting_json_stdout(self) -> None:
+        original_run_search = cli_module.run_search
+
+        def fake_run_search(query: str, **kwargs):
+            item = deep_search.result(
+                source="ok",
+                pack="news",
+                source_type="news",
+                query_variant=query,
+                title="OpenAI Codex evidence",
+                url="https://example.com/openai",
+            )
+            return deep_search.SearchRun(
+                query=query,
+                depth=kwargs["depth"],
+                packs=kwargs["packs"],
+                locale="ko-KR",
+                query_variants=[query],
+                results=[item],
+                research_contract={"mode": "basic", "enabled": True, "goal": "test", "scope": "public", "done_evidence": "done"},
+                run_checkpoint={"seen_queries": [query], "seen_urls": [item.url]},
+            )
+
+        try:
+            cli_module.run_search = fake_run_search  # type: ignore[assignment]
+            with TemporaryDirectory() as tmp:
+                html_path = str(Path(tmp) / "board.html")
+                checkpoint_path = str(Path(tmp) / "checkpoint.json")
+                stdout = StringIO()
+                stderr = StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(
+                        cli_module.main(
+                            [
+                                "OpenAI Codex",
+                                "--json",
+                                "--quiet",
+                                "--html-report",
+                                html_path,
+                                "--checkpoint",
+                                checkpoint_path,
+                            ]
+                        ),
+                        0,
+                    )
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(stderr.getvalue(), "")
+                self.assertTrue(Path(html_path).exists())
+                self.assertTrue(Path(checkpoint_path).exists())
+                self.assertEqual(payload["html_report"]["path"], html_path)
+                self.assertTrue(payload["run_checkpoint"]["saved"])
+        finally:
+            cli_module.run_search = original_run_search  # type: ignore[assignment]
+
+    def test_html_report_is_self_contained_without_remote_assets(self) -> None:
+        item = deep_search.result(
+            source="ok",
+            pack="news",
+            source_type="news",
+            query_variant="x",
+            title="OpenAI Codex evidence",
+            url="https://example.com/openai",
+            snippet="evidence",
+        )
+        run = deep_search.SearchRun(
+            query="OpenAI Codex",
+            depth="quick",
+            packs=["news"],
+            locale="ko-KR",
+            query_variants=["OpenAI Codex"],
+            results=[item],
+            claims=[{"claim": "OpenAI Codex evidence", "status": "supported", "confidence": 0.8, "supporting_sources": ["ok"]}],
+        )
+        html = deep_search.build_html_report(run)
+        self.assertIn("Deep Search Evidence Board", html)
+        self.assertNotIn("<script", html.lower())
+        self.assertNotIn("<link", html.lower())
+        self.assertNotIn("url(http", html.lower())
 
     def test_local_llm_unavailable_falls_back_to_heuristic_planner(self) -> None:
         original_generate_json = research_module.generate_json
